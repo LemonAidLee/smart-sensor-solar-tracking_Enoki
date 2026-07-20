@@ -20,7 +20,7 @@ function AnimatedStars() {
     <group ref={group}>
       <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
       {/* Add a subtle green hue to some stars to match theme */}
-      <Stars radius={100} depth={50} count={1000} factor={4} saturation={1} fade speed={1.5} color="#00D084" />
+      <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
     </group>
   )
 }

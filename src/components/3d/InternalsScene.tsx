@@ -44,7 +44,7 @@ export function InternalsScene() {
               <WiringDiagram />
               <ContactShadows position={[0, -1, 0]} opacity={0.6} scale={25} blur={2.5} color="#000000" />
               
-              <EffectComposer disableNormalPass>
+              <EffectComposer>
                 <Bloom luminanceThreshold={1} mipmapBlur intensity={1.5} />
               </EffectComposer>
             </Suspense>

@@ -1,4 +1,3 @@
-import { ScrollArea } from "@/components/ui/ScrollArea" // wait, we don't have shadcn scroll area. I will use standard CSS overflow.
 
 interface CodeViewerProps {
   code: string

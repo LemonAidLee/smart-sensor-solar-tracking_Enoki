@@ -80,7 +80,7 @@ export function DecisionsSection() {
               <div className="w-full h-[1px] bg-white/10 relative">
                 <motion.div 
                   className={`absolute left-0 top-0 h-full w-0 bg-gradient-to-r from-transparent ${item.iconColor.replace('text-', 'via-')} to-transparent opacity-50`}
-                  whileInView={{ w: "100%" }}
+                  whileInView={{ width: "100%" }}
                   transition={{ duration: 1.5, repeat: Infinity }}
                 />
               </div>

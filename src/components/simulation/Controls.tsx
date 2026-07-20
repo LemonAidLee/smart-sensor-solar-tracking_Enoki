@@ -11,7 +11,7 @@ interface ControlsProps {
 
 export function Controls({ controls, setControls, isPlaying, setIsPlaying, setTimeToRealTime }: ControlsProps) {
   
-  const handleSlider = (key: keyof SimulationControls, value: number | boolean) => {
+  const updateControl = (key: keyof SimulationControls, value: number | boolean) => {
     setControls(prev => ({ ...prev, [key]: value }));
   };
 

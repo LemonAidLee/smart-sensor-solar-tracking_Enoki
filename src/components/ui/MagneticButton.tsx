@@ -1,10 +1,10 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { motion, useMotionValue, useSpring, useTransform } from "framer-motion"
+import { motion, HTMLMotionProps, useMotionValue, useSpring, useTransform } from "framer-motion"
 import { cn } from "@/lib/utils"
 
-interface MagneticButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+interface MagneticButtonProps extends HTMLMotionProps<"button"> {
   children: React.ReactNode
   variant?: "primary" | "secondary" | "outline"
   className?: string

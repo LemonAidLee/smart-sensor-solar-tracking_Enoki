@@ -59,7 +59,7 @@ function KineticSun() {
         </Sphere>
 
         {/* Wireframe Outer Shell */}
-        <Sphere ref={outerMesh} args={[1.9, 24, 24]} pointerEvents="none">
+        <Sphere ref={outerMesh} args={[1.9, 24, 24]}>
           <meshStandardMaterial 
             color="#00D084" 
             emissive="#00D084" 

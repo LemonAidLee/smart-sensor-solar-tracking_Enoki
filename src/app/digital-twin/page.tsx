@@ -60,7 +60,7 @@ function Scene() {
         <ContactShadows position={[0, -1.99, 0]} opacity={0.6} scale={20} blur={2.5} far={10} color="#000000" />
         
         {/* Post-Processing Bloom */}
-        <EffectComposer disableNormalPass>
+        <EffectComposer>
           <Bloom luminanceThreshold={1.2} mipmapBlur intensity={1.5} />
         </EffectComposer>
       </Suspense>

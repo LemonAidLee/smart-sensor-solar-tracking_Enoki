@@ -10,7 +10,7 @@ import { GlobalBackground } from '@/components/3d/GlobalBackground';
 
 export default function SimulationPage() {
   // Kuala Lumpur, Malaysia (3.14°N, 101.69°E, UTC+8)
-  const sim = useSimulation(3.14, 101.69, 8, "WEST");
+  const sim = useSimulation(3.14, 101.69, 8);
 
   return (
     <div className="min-h-screen relative text-white p-4 md:p-8 flex flex-col font-sans selection:bg-emerald-500/30 pt-24 z-0">
