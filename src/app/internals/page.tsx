@@ -1,13 +1,10 @@
-import fs from "fs/promises"
-import path from "path"
 import { Navigation } from "@/components/layout/Navigation"
 import { CodeViewer } from "@/components/ui/CodeViewer"
 import { InternalsScene } from "@/components/3d/InternalsScene"
+import { sketchCode } from "@/lib/sketchCode"
 
-export default async function InternalsPage() {
-  // Read the C++ code from the workspace directory
-  const filePath = path.join(process.cwd(), "E&M Programming", "sketch.ino")
-  const code = await fs.readFile(filePath, "utf-8")
+export default function InternalsPage() {
+  const code = sketchCode;
 
   return (
     <main className="relative min-h-screen bg-[#090909] overflow-hidden pt-28 px-4 lg:px-8 pb-8">
