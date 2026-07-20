@@ -39,3 +39,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Large Datasets
+public/data/*.csv
+
+# Local config and reference files
+.agents/
+3D Model Files/
+E&M Programming/
+Kinetic_Facade_Algorithm_Design.pdf
+scripts/venv/
+skills-lock.json
