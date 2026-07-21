@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { name: "Solution", href: "/#solution" },
   { name: "Technology", href: "/#technology" },
   { name: "AI Brain", href: "/#ai-brain" },
+  { name: "Weather", href: "/#weather" },
   { name: "Simulation", href: "/simulation" },
   { name: "Digital Twin", href: "/digital-twin" },
   { name: "Internals", href: "/internals" },

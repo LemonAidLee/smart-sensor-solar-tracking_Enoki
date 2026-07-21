@@ -130,15 +130,6 @@ export function HeroSection() {
           className="flex w-full lg:w-2/5 flex-col items-start gap-8 z-20"
           style={{ y, opacity }}
         >
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            className="flex items-center gap-2 rounded-full border border-emerald/30 bg-emerald/10 px-4 py-1.5 text-xs font-medium uppercase tracking-[0.2em] text-emerald"
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald animate-pulse" />
-            The Responsive Skin
-          </motion.div>
 
           <motion.h1 
             initial={{ opacity: 0, y: 30 }}

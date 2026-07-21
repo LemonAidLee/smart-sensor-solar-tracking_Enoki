@@ -6,8 +6,8 @@ import { ProblemSection } from "@/components/sections/ProblemSection"
 import { SolutionSection } from "@/components/sections/SolutionSection"
 import { SensorFusionSection } from "@/components/sections/SensorFusionSection"
 import { BrainSection } from "@/components/sections/BrainSection"
-import { TrackingSection } from "@/components/sections/TrackingSection"
 import { DashboardSection } from "@/components/sections/DashboardSection"
+import { WeatherIntelligenceSection } from "@/components/sections/WeatherIntelligenceSection"
 import { DecisionsSection } from "@/components/sections/DecisionsSection"
 import { TechStackSection } from "@/components/sections/TechStackSection"
 import { ImpactSection } from "@/components/sections/ImpactSection"
@@ -30,8 +30,8 @@ export default function Home() {
       <SolutionSection />
       <SensorFusionSection />
       <BrainSection />
-      <TrackingSection />
       <DashboardSection />
+      <WeatherIntelligenceSection />
       <DecisionsSection />
       <TechStackSection />
       <ImpactSection />

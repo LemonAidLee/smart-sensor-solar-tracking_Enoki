@@ -82,10 +82,13 @@ export function DashboardSection() {
         <GlassCard className="col-span-1 md:col-span-1 lg:col-span-1 row-span-1" innerClassName="p-5 flex flex-col items-center justify-center relative">
           <span className="text-xs text-gray-400 uppercase tracking-widest absolute top-5 left-5">Panel Angle</span>
           
-          <div className="w-24 h-24 mt-4 rounded-full border-4 border-navy relative flex items-center justify-center">
+          <div className="w-24 h-24 mt-4 rounded-full relative flex items-center justify-center">
              {/* Gauge arc */}
-             <svg className="absolute inset-0 w-full h-full -rotate-90">
-               <circle cx="48" cy="48" r="44" stroke="#00D084" strokeWidth="4" fill="none" strokeDasharray="276" strokeDashoffset="100" className="opacity-80" />
+             <svg viewBox="0 0 96 96" className="absolute inset-0 w-full h-full -rotate-90 overflow-visible">
+               {/* Track ring */}
+               <circle cx="48" cy="48" r="44" stroke="rgba(255,255,255,0.08)" strokeWidth="4" fill="none" />
+               {/* Progress arc */}
+               <circle cx="48" cy="48" r="44" stroke="#00D084" strokeWidth="4" fill="none" strokeLinecap="round" strokeDasharray="276" strokeDashoffset="100" className="opacity-90" />
              </svg>
              <div className="flex flex-col items-center">
                <span className="text-2xl font-mono text-white font-bold">42°</span>

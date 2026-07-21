@@ -1,0 +1,384 @@
+{
+  "meta": {
+    "source": "Kaggle \u00b7 shahmirvarqha/weather-data-malaysia",
+    "region": "Kuala Lumpur, Malaysia",
+    "records": 3196627,
+    "yearStart": 1996,
+    "yearEnd": 2024
+  },
+  "overall": {
+    "temperature": 28.1,
+    "humidity": 82.4,
+    "rainfall": 0.37,
+    "windSpeed": 2.4,
+    "solar": 139.1,
+    "uvIndex": 1.2
+  },
+  "monthly": [
+    {
+      "month": 1,
+      "name": "Jan",
+      "temperature": 27.5,
+      "feelsLike": 29.9,
+      "humidity": 82.5,
+      "windSpeed": 2.4,
+      "solar": 136.2,
+      "uvIndex": 1.2,
+      "rainfall": 0.34
+    },
+    {
+      "month": 2,
+      "name": "Feb",
+      "temperature": 28.0,
+      "feelsLike": 30.5,
+      "humidity": 80.2,
+      "windSpeed": 2.5,
+      "solar": 152.8,
+      "uvIndex": 1.3,
+      "rainfall": 0.31
+    },
+    {
+      "month": 3,
+      "name": "Mar",
+      "temperature": 28.6,
+      "feelsLike": 31.4,
+      "humidity": 80.4,
+      "windSpeed": 2.4,
+      "solar": 159.7,
+      "uvIndex": 1.4,
+      "rainfall": 0.47
+    },
+    {
+      "month": 4,
+      "name": "Apr",
+      "temperature": 28.6,
+      "feelsLike": 32.0,
+      "humidity": 83.1,
+      "windSpeed": 2.1,
+      "solar": 131.7,
+      "uvIndex": 1.2,
+      "rainfall": 0.39
+    },
+    {
+      "month": 5,
+      "name": "May",
+      "temperature": 28.8,
+      "feelsLike": 32.6,
+      "humidity": 80.9,
+      "windSpeed": 2.2,
+      "solar": 133.3,
+      "uvIndex": 1.1,
+      "rainfall": 0.28
+    },
+    {
+      "month": 6,
+      "name": "Jun",
+      "temperature": 28.1,
+      "feelsLike": 31.8,
+      "humidity": 81.9,
+      "windSpeed": 2.3,
+      "solar": 126.9,
+      "uvIndex": 1.1,
+      "rainfall": 0.3
+    },
+    {
+      "month": 7,
+      "name": "Jul",
+      "temperature": 28.4,
+      "feelsLike": 31.1,
+      "humidity": 81.2,
+      "windSpeed": 2.6,
+      "solar": 135.7,
+      "uvIndex": 1.2,
+      "rainfall": 0.3
+    },
+    {
+      "month": 8,
+      "name": "Aug",
+      "temperature": 27.9,
+      "feelsLike": 30.9,
+      "humidity": 82.9,
+      "windSpeed": 2.5,
+      "solar": 136.9,
+      "uvIndex": 1.2,
+      "rainfall": 0.31
+    },
+    {
+      "month": 9,
+      "name": "Sep",
+      "temperature": 28.0,
+      "feelsLike": 30.5,
+      "humidity": 81.2,
+      "windSpeed": 2.7,
+      "solar": 150.7,
+      "uvIndex": 1.3,
+      "rainfall": 0.34
+    },
+    {
+      "month": 10,
+      "name": "Oct",
+      "temperature": 27.8,
+      "feelsLike": 30.5,
+      "humidity": 83.4,
+      "windSpeed": 2.5,
+      "solar": 148.6,
+      "uvIndex": 1.3,
+      "rainfall": 0.41
+    },
+    {
+      "month": 11,
+      "name": "Nov",
+      "temperature": 27.5,
+      "feelsLike": 29.9,
+      "humidity": 86.0,
+      "windSpeed": 2.2,
+      "solar": 134.5,
+      "uvIndex": 1.1,
+      "rainfall": 0.53
+    },
+    {
+      "month": 12,
+      "name": "Dec",
+      "temperature": 27.4,
+      "feelsLike": 29.7,
+      "humidity": 84.9,
+      "windSpeed": 2.2,
+      "solar": 126.7,
+      "uvIndex": 1.1,
+      "rainfall": 0.46
+    }
+  ],
+  "hourly": [
+    {
+      "hour": 0,
+      "temperature": 26.4,
+      "humidity": 89.1,
+      "windSpeed": 1.5,
+      "solar": 37.7,
+      "uvIndex": 0.2,
+      "rainfall": 0.18
+    },
+    {
+      "hour": 1,
+      "temperature": 26.9,
+      "humidity": 87.2,
+      "windSpeed": 1.6,
+      "solar": 94.3,
+      "uvIndex": 0.6,
+      "rainfall": 0.15
+    },
+    {
+      "hour": 2,
+      "temperature": 27.3,
+      "humidity": 85.4,
+      "windSpeed": 1.8,
+      "solar": 176.7,
+      "uvIndex": 1.2,
+      "rainfall": 0.14
+    },
+    {
+      "hour": 3,
+      "temperature": 27.6,
+      "humidity": 84.0,
+      "windSpeed": 2.0,
+      "solar": 233.3,
+      "uvIndex": 1.7,
+      "rainfall": 0.2
+    },
+    {
+      "hour": 4,
+      "temperature": 27.8,
+      "humidity": 83.1,
+      "windSpeed": 2.1,
+      "solar": 244.5,
+      "uvIndex": 1.8,
+      "rainfall": 0.21
+    },
+    {
+      "hour": 5,
+      "temperature": 27.8,
+      "humidity": 82.7,
+      "windSpeed": 2.2,
+      "solar": 235.3,
+      "uvIndex": 1.7,
+      "rainfall": 0.23
+    },
+    {
+      "hour": 6,
+      "temperature": 27.7,
+      "humidity": 83.1,
+      "windSpeed": 2.3,
+      "solar": 199.5,
+      "uvIndex": 1.4,
+      "rainfall": 0.29
+    },
+    {
+      "hour": 7,
+      "temperature": 27.5,
+      "humidity": 84.0,
+      "windSpeed": 2.3,
+      "solar": 155.3,
+      "uvIndex": 1.2,
+      "rainfall": 0.44
+    },
+    {
+      "hour": 8,
+      "temperature": 27.8,
+      "humidity": 83.3,
+      "windSpeed": 2.4,
+      "solar": 133.2,
+      "uvIndex": 1.1,
+      "rainfall": 0.59
+    },
+    {
+      "hour": 9,
+      "temperature": 28.6,
+      "humidity": 80.6,
+      "windSpeed": 2.6,
+      "solar": 152.7,
+      "uvIndex": 1.3,
+      "rainfall": 0.49
+    },
+    {
+      "hour": 10,
+      "temperature": 29.3,
+      "humidity": 77.8,
+      "windSpeed": 2.8,
+      "solar": 237.2,
+      "uvIndex": 2.2,
+      "rainfall": 0.47
+    },
+    {
+      "hour": 11,
+      "temperature": 29.7,
+      "humidity": 75.9,
+      "windSpeed": 3.0,
+      "solar": 287.8,
+      "uvIndex": 2.8,
+      "rainfall": 0.4
+    },
+    {
+      "hour": 12,
+      "temperature": 30.1,
+      "humidity": 74.7,
+      "windSpeed": 3.1,
+      "solar": 293.6,
+      "uvIndex": 3.0,
+      "rainfall": 0.18
+    },
+    {
+      "hour": 13,
+      "temperature": 30.3,
+      "humidity": 74.0,
+      "windSpeed": 3.2,
+      "solar": 276.4,
+      "uvIndex": 2.9,
+      "rainfall": 0.22
+    },
+    {
+      "hour": 14,
+      "temperature": 30.2,
+      "humidity": 74.4,
+      "windSpeed": 3.4,
+      "solar": 233.9,
+      "uvIndex": 2.5,
+      "rainfall": 0.29
+    },
+    {
+      "hour": 15,
+      "temperature": 29.9,
+      "humidity": 75.9,
+      "windSpeed": 3.5,
+      "solar": 168.5,
+      "uvIndex": 1.8,
+      "rainfall": 0.64
+    },
+    {
+      "hour": 16,
+      "temperature": 29.2,
+      "humidity": 78.2,
+      "windSpeed": 3.4,
+      "solar": 101.1,
+      "uvIndex": 1.1,
+      "rainfall": 0.89
+    },
+    {
+      "hour": 17,
+      "temperature": 28.6,
+      "humidity": 80.6,
+      "windSpeed": 3.0,
+      "solar": 51.7,
+      "uvIndex": 0.5,
+      "rainfall": 0.87
+    },
+    {
+      "hour": 18,
+      "temperature": 27.9,
+      "humidity": 83.0,
+      "windSpeed": 2.5,
+      "solar": 16.0,
+      "uvIndex": 0.2,
+      "rainfall": 0.65
+    },
+    {
+      "hour": 19,
+      "temperature": 27.2,
+      "humidity": 85.6,
+      "windSpeed": 2.0,
+      "solar": 0.9,
+      "uvIndex": 0.0,
+      "rainfall": 0.45
+    },
+    {
+      "hour": 20,
+      "temperature": 26.8,
+      "humidity": 87.4,
+      "windSpeed": 1.7,
+      "solar": 0.0,
+      "uvIndex": 0.0,
+      "rainfall": 0.3
+    },
+    {
+      "hour": 21,
+      "temperature": 26.5,
+      "humidity": 88.5,
+      "windSpeed": 1.6,
+      "solar": 0.0,
+      "uvIndex": 0.0,
+      "rainfall": 0.21
+    },
+    {
+      "hour": 22,
+      "temperature": 26.3,
+      "humidity": 89.2,
+      "windSpeed": 1.5,
+      "solar": 0.0,
+      "uvIndex": 0.0,
+      "rainfall": 0.2
+    },
+    {
+      "hour": 23,
+      "temperature": 26.1,
+      "humidity": 89.8,
+      "windSpeed": 1.5,
+      "solar": 7.1,
+      "uvIndex": 0.0,
+      "rainfall": 0.19
+    }
+  ],
+  "insights": {
+    "peakSolarMonths": [
+      "Mar",
+      "Feb",
+      "Sep"
+    ],
+    "peakRainfallMonth": "Nov",
+    "peakWindMonths": [
+      "Sep",
+      "Jul"
+    ],
+    "peakHumidityMonth": "Nov",
+    "peakSolarHour": 12,
+    "peakTempHour": 13
+  }
+}
