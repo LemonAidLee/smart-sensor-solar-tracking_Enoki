@@ -40,12 +40,19 @@ export function Navigation() {
       >
         <div
           className={cn(
-            "flex items-center justify-between rounded-full px-6 py-3 transition-all duration-700 w-[95%] max-w-7xl",
-            isScrolled 
-              ? "bg-navy/60 backdrop-blur-2xl shadow-[0_4px_30px_rgba(0,0,0,0.1)] border border-white/10" 
+            "relative flex items-center justify-between rounded-full px-6 py-3 transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] w-[95%] max-w-7xl border",
+            isScrolled
+              ? "bg-navy/50 backdrop-blur-2xl backdrop-saturate-150 shadow-[0_20px_45px_-20px_rgba(0,0,0,0.65)] border-white/10"
               : "bg-transparent border-transparent"
           )}
         >
+          {/* Specular top-edge sheen (only visible once the glass pill appears) */}
+          <div
+            className={cn(
+              "pointer-events-none absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-white/40 to-transparent transition-opacity duration-700",
+              isScrolled ? "opacity-100" : "opacity-0"
+            )}
+          />
           {/* Logo */}
           <div className="flex items-center gap-2 shrink-0 pr-4">
             <div className="h-6 w-6 rounded-full bg-emerald shadow-[0_0_15px_rgba(0,208,132,0.5)] shrink-0" />
@@ -58,9 +65,11 @@ export function Navigation() {
               <a
                 key={link.name}
                 href={link.href}
-                className="text-sm font-medium text-white/70 hover:text-white transition-colors duration-300 whitespace-nowrap"
+                className="group relative text-sm font-medium text-white/70 hover:text-white transition-colors duration-300 whitespace-nowrap py-1"
               >
                 {link.name}
+                {/* Animated underline sweep */}
+                <span className="pointer-events-none absolute -bottom-0.5 left-0 h-px w-full origin-left scale-x-0 bg-gradient-to-r from-emerald to-electric transition-transform duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:scale-x-100" />
               </a>
             ))}
           </nav>

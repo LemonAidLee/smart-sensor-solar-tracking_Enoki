@@ -47,12 +47,12 @@ export function MagneticButton({
     y.set(0)
   }
 
-  const baseStyles = "relative inline-flex items-center justify-center rounded-full px-6 py-3 font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98]"
-  
+  const baseStyles = "relative inline-flex items-center justify-center overflow-hidden rounded-full px-6 py-3 font-medium transition-[background-color,box-shadow,transform] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] outline-none focus-visible:ring-2 focus-visible:ring-emerald focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98]"
+
   const variants = {
-    primary: "bg-emerald text-navy hover:bg-emerald/90",
-    secondary: "bg-electric text-navy hover:bg-electric/90",
-    outline: "border border-white/20 bg-white/5 hover:bg-white/10 text-white"
+    primary: "bg-emerald text-navy hover:bg-emerald/90 shadow-[0_8px_30px_-8px_rgba(0,208,132,0.7)] hover:shadow-[0_10px_40px_-6px_rgba(0,208,132,0.85)]",
+    secondary: "bg-electric text-navy hover:bg-electric/90 shadow-[0_8px_30px_-8px_rgba(56,189,248,0.7)] hover:shadow-[0_10px_40px_-6px_rgba(56,189,248,0.85)]",
+    outline: "border border-white/15 bg-white/5 backdrop-blur-xl backdrop-saturate-150 hover:bg-white/10 hover:border-white/25 text-white"
   }
 
   return (
@@ -65,6 +65,8 @@ export function MagneticButton({
       className={cn(baseStyles, variants[variant], "group", className)}
       {...props}
     >
+      {/* Glass sheen sweep on hover */}
+      <span className="pointer-events-none absolute inset-0 z-0 -translate-x-full bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] group-hover:translate-x-full" />
       <span className="relative z-10 flex items-center gap-2">
         {children}
         {icon && (

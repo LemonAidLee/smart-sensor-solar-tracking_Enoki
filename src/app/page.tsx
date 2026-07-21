@@ -1,4 +1,5 @@
 import { Navigation } from "@/components/layout/Navigation"
+import { ScrollProgress } from "@/components/layout/ScrollProgress"
 import { Footer } from "@/components/layout/Footer"
 import { HeroSection } from "@/components/sections/HeroSection"
 import { ProblemSection } from "@/components/sections/ProblemSection"
@@ -21,6 +22,7 @@ export default function Home() {
   return (
     <main className="min-h-[100dvh] w-full selection:bg-emerald/30 selection:text-white relative">
       <GlobalBackground />
+      <ScrollProgress />
       <Navigation />
       
       <HeroSection />

@@ -1,19 +1,42 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #090909;
+  --color-background: #060608;
   --color-foreground: #ffffff;
   --color-navy: #111827;
   --color-emerald: #00D084;
   --color-electric: #38BDF8;
-  
+
   --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, monospace;
+
+  /* Glass design system tokens */
+  --glass-blur: 18px;
+  --glass-saturate: 160%;
+  --glass-bg: rgba(255, 255, 255, 0.04);
+  --glass-bg-strong: rgba(17, 24, 39, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.10);
+  --glass-highlight: rgba(255, 255, 255, 0.14);
+  --glass-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.65);
+
+  /* Motion easing */
+  --ease-glass: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Animated keyframes exposed as theme animations */
+  --animate-aurora: aurora 18s ease-in-out infinite;
+  --animate-sheen: sheen 6s ease-in-out infinite;
+  --animate-float-slow: float-slow 8s ease-in-out infinite;
 }
 
 /* Force dark mode */
 :root {
   color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+  /* Offset anchor jumps so sections clear the fixed floating nav */
+  scroll-padding-top: 6rem;
 }
 
 body {
@@ -22,6 +45,33 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv11", "ss01";
+  overflow-x: hidden;
+}
+
+/* Premium film-grain / noise texture overlay (very subtle, GPU-cheap, non-interactive) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.028;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Ensure page content stacks above the grain layer */
+main,
+footer {
+  position: relative;
+  z-index: 2;
+}
+
+/* Anchor-target sections clear the fixed nav on scroll */
+section[id] {
+  scroll-margin-top: 6rem;
 }
 
 /* Utility for text gradients */
@@ -29,17 +79,116 @@ body {
   @apply bg-gradient-to-r from-emerald to-electric bg-clip-text text-transparent;
 }
 
-/* Base scrollbar styling for premium feel */
+/* Reusable glass surfaces -------------------------------------------------- */
+@utility glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+@utility glass-strong {
+  background: var(--glass-bg-strong);
+  backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Specular top-edge sheen for glass panels (apply to a ::before-less element) */
+@utility glass-sheen {
+  position: relative;
+}
+
+/* Keyframes ---------------------------------------------------------------- */
+@keyframes aurora {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.55;
+  }
+  50% {
+    transform: translate3d(3%, -4%, 0) scale(1.15);
+    opacity: 0.85;
+  }
+}
+
+@keyframes sheen {
+  0% {
+    background-position: -140% 0;
+  }
+  55%,
+  100% {
+    background-position: 140% 0;
+  }
+}
+
+@keyframes float-slow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+/* Refined premium scrollbar ------------------------------------------------ */
 ::-webkit-scrollbar {
-  width: 8px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: var(--color-background);
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--color-navy);
-  border-radius: 4px;
+  background: linear-gradient(180deg, var(--color-emerald), var(--color-electric));
+  border-radius: 999px;
+  border: 2px solid var(--color-background);
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-electric);
+  background: linear-gradient(180deg, var(--color-electric), var(--color-emerald));
+}
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-emerald) var(--color-background);
+}
+
+/* Hide scrollbars for opt-in horizontal scrollers */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Accessible focus ring */
+:focus-visible {
+  outline: 2px solid var(--color-emerald);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Selection */
+::selection {
+  background: rgba(0, 208, 132, 0.3);
+  color: #ffffff;
+}
+
+/* Respect reduced-motion: disable non-essential motion site-wide */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
