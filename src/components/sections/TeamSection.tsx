@@ -6,10 +6,10 @@ import { GlassCard } from "@/components/ui/GlassCard"
 import { Linkedin, Github } from "@/components/ui/Icons"
 
 const TEAM = [
-  { name: "Alex Chen", role: "Mechatronics Lead", initials: "AC" },
-  { name: "Sarah Jenkins", role: "AI & Sensor Fusion", initials: "SJ" },
-  { name: "David Kim", role: "Architecture & Design", initials: "DK" },
-  { name: "Elena Rodriguez", role: "Systems Engineering", initials: "ER" }
+  { name: "Lim Yong Hen", role: "Team Leader", initials: "LYH" },
+  { name: "Lee Wen Yi", role: "Software & Systems", initials: "LWY" },
+  { name: "Joo Eu-Jin", role: "Mechatronics & AI", initials: "JEJ" },
+  { name: "Ong Jing Zhen", role: "Architecture & Design", initials: "OJZ" }
 ]
 
 export function TeamSection() {

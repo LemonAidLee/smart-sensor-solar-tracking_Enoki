@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(awk -F'\\\\\\\\\\\\\\\\' '{print $2}' \"C:\\\\Users\\\\Asus\\\\.claude\\\\projects\\\\D--Progmata-SmartSensor-Solar-Tracking\\\\e49b3a24-1a32-49ec-a862-e6c06718c2a5\\\\tool-results\\\\bjlkol9ss.txt\")",
+      "Bash(where uipro *)",
+      "Bash(npx uipro *)",
+      "Bash(npm view *)",
+      "Bash(npm install *)",
+      "Bash(uipro init *)"
+    ]
+  }
+}

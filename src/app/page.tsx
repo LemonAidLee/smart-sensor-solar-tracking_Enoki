@@ -11,6 +11,7 @@ import { DecisionsSection } from "@/components/sections/DecisionsSection"
 import { TechStackSection } from "@/components/sections/TechStackSection"
 import { ImpactSection } from "@/components/sections/ImpactSection"
 import { PrototypeSection } from "@/components/sections/PrototypeSection"
+import { ComponentsSection } from "@/components/sections/ComponentsSection"
 import { RoadmapSection } from "@/components/sections/RoadmapSection"
 import { TeamSection } from "@/components/sections/TeamSection"
 
@@ -33,6 +34,7 @@ export default function Home() {
       <TechStackSection />
       <ImpactSection />
       <PrototypeSection />
+      <ComponentsSection />
       <RoadmapSection />
       <TeamSection />
       
