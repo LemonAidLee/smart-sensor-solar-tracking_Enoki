@@ -1,0 +1,227 @@
+.dt-cursor-active {
+  cursor: none !important;
+}
+
+.dt-cursor-active * {
+  cursor: none !important;
+}
+
+/* Base styles for the cursor elements */
+.sim-cursor-inner,
+.sim-cursor-outer,
+.sim-cursor-ghost,
+.sim-cursor-halo {
+  position: absolute;
+  pointer-events: none;
+  transform-origin: center;
+  will-change: transform;
+  transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%);
+}
+
+/* Layer 3: Soft Blurred Halo */
+.sim-cursor-halo {
+  width: 48px;
+  height: 48px;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.15) 0%, rgba(0, 208, 132, 0.05) 40%, transparent 70%);
+  border-radius: 50%;
+  filter: blur(4px);
+  mix-blend-mode: difference;
+  z-index: 8;
+  transition: width 0.3s ease, height 0.3s ease;
+}
+
+/* Ghost Trail */
+.sim-cursor-ghost {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(0, 208, 132, 0.2);
+  border-radius: 50%;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+              height 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  z-index: 9;
+}
+
+/* Layer 2: Dominant Outer Ring */
+.sim-cursor-outer {
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid rgba(255, 255, 255, 0.85); /* Stronger primary ring */
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  mix-blend-mode: difference; /* Adaptive contrast */
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+              height 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+              border-color 0.3s ease, 
+              background-color 0.3s ease,
+              border-radius 0.3s ease,
+              border-width 0.3s ease;
+  z-index: 10;
+  animation: cursor-idle-breathe 4s ease-in-out infinite;
+}
+
+@keyframes cursor-idle-breathe {
+  0%, 100% { transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) scale(1); }
+  50% { transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) scale(1.05); }
+}
+
+/* Layer 1: Inner Dot */
+.sim-cursor-inner {
+  width: 8px; /* Slightly larger */
+  height: 8px;
+  background-color: #ffffff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.8), 0 0 2px rgba(0, 0, 0, 0.5); /* Brightest part with subtle dark outline for contrast */
+  border-radius: 50%;
+  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+              height 0.3s cubic-bezier(0.16, 1, 0.3, 1), 
+              background-color 0.3s ease, 
+              border 0.3s ease,
+              border-radius 0.3s ease,
+              box-shadow 0.3s ease;
+  z-index: 11;
+}
+
+/* Crosshairs */
+.sim-cursor-crosshair {
+  position: absolute;
+  background-color: #00d084;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.sim-cursor-crosshair.horizontal {
+  width: 140%;
+  height: 1.5px;
+}
+.sim-cursor-crosshair.vertical {
+  width: 1.5px;
+  height: 140%;
+}
+
+/* STATES */
+
+/* Proximity (Subtle cue, no geometric expansion) */
+.sim-cursor-outer[data-state="proximity"] {
+  border-color: rgba(255, 255, 255, 1);
+  animation: none;
+}
+.sim-cursor-inner[data-state="proximity"] {
+  box-shadow: 0 0 10px rgba(0, 208, 132, 0.6), 0 0 2px rgba(0, 0, 0, 0.5);
+  background-color: #f0fdf4;
+}
+
+/* Button Hover */
+.sim-cursor-outer[data-state="button-hover"] {
+  width: 44px;
+  height: 44px;
+  border-width: 2px;
+  border-color: rgba(0, 208, 132, 0.8);
+  background-color: rgba(0, 208, 132, 0.15);
+  animation: none; /* Disable idle breathing */
+}
+.sim-cursor-inner[data-state="button-hover"] {
+  width: 4px;
+  height: 4px;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+.sim-cursor-halo[data-state="button-hover"] {
+  width: 64px;
+  height: 64px;
+  background: radial-gradient(circle, rgba(0, 208, 132, 0.2) 0%, transparent 60%);
+}
+
+/* Slider Hover */
+.sim-cursor-outer[data-state="slider-hover"] {
+  width: 4px;
+  height: 24px;
+  border-radius: 2px;
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: transparent;
+  animation: none;
+}
+.sim-cursor-inner[data-state="slider-hover"] {
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+/* Dragging Timeline */
+.sim-cursor-outer[data-state="dragging-timeline"] {
+  width: 48px;
+  height: 8px;
+  border-radius: 4px;
+  background-color: rgba(255, 255, 255, 0.9);
+  border-color: transparent;
+  animation: none;
+}
+.sim-cursor-outer[data-state="dragging-timeline"] {
+  /* Drag: Gentle rotational motion via transition when state applies */
+  transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) rotate(180deg);
+  transition: transform 0.5s ease-out, width 0.3s, height 0.3s;
+}
+.sim-cursor-inner[data-state="dragging-timeline"] {
+  width: 0;
+  height: 0;
+}
+
+/* Building Hover */
+.sim-cursor-outer[data-state="building-hover"] {
+  width: 48px;
+  height: 48px;
+  border-width: 2px;
+  border-color: rgba(0, 208, 132, 0.9);
+}
+.sim-cursor-inner[data-state="building-hover"] {
+  background-color: #00d084;
+  box-shadow: 0 0 10px rgba(0, 208, 132, 0.8), 0 0 2px rgba(0, 0, 0, 0.5);
+}
+
+/* Panel Hover (Inspection) */
+.sim-cursor-outer[data-state="panel-hover"] {
+  width: 28px;
+  height: 28px;
+  border-radius: 0;
+  border-color: #00d084;
+  border-width: 1.5px;
+  transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) rotate(45deg);
+  animation: none;
+}
+.sim-cursor-outer[data-state="panel-hover"] .sim-cursor-crosshair {
+  opacity: 1;
+}
+.sim-cursor-inner[data-state="panel-hover"] {
+  width: 4px;
+  height: 4px;
+  background-color: transparent;
+  border: 1px solid #00d084;
+  box-shadow: none;
+}
+
+/* Camera Orbit */
+.sim-cursor-outer[data-state="camera-orbit"] {
+  width: 44px;
+  height: 44px;
+  border-style: dashed;
+  border-width: 2px;
+  border-color: rgba(255, 255, 255, 0.7);
+  animation: orbit-spin 4s linear infinite;
+}
+@keyframes orbit-spin {
+  from { transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) rotate(0deg); }
+  to { transform: translate3d(var(--cx, -100px), var(--cy, -100px), 0) translate(-50%, -50%) rotate(360deg); }
+}
+
+/* Click Animation (Pulse) */
+.sim-cursor-outer.clicking {
+  width: 48px !important;
+  height: 48px !important;
+  background-color: rgba(255, 255, 255, 0.3);
+  border-width: 1px !important;
+  opacity: 0.5;
+  transition: width 0.1s ease-out, height 0.1s ease-out, opacity 0.1s ease-out, background-color 0.1s ease-out;
+}
+.sim-cursor-inner.clicking {
+  width: 4px !important;
+  height: 4px !important;
+  transition: width 0.1s ease-out, height 0.1s ease-out;
+}

@@ -18,6 +18,7 @@ interface WeatherChartProps {
 }
 
 /* Glassy custom tooltip ---------------------------------------------------- */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function ChartTooltip({ active, payload, label, metric }: any) {
   if (!active || !payload?.length) return null
   const m = METRICS[metric as MetricKey]

@@ -3,6 +3,7 @@ import { useGLTF, Center } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function ESP32Model(props: any) {
   const gltf = useGLTF('/ESP32-S3-WROOM-1.glb')
   const group = useRef<THREE.Group>(null)

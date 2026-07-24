@@ -146,6 +146,74 @@ int getAstronomicalSunAngle() {
     return targetAstroAngle;
 }
 
+// --- MODEL PREDICTIVE CONTROL (MPC) OPTIMIZER ---
+const double FACADE_AZIMUTH = 0.0; // Building's Surface 1 Faces North (0 degrees)
+
+int runMPCOptimization(float temp) {
+    time_t now = time(nullptr);
+    double sunAz, sunEl;
+    calcHorizontalCoordinates(now, LATITUDE, LONGITUDE, sunAz, sunEl);
+
+    // Convert degrees to radians for math
+    double sunAzRad = sunAz * PI / 180.0;
+    double sunElRad = sunEl * PI / 180.0;
+    double facadeAzRad = FACADE_AZIMUTH * PI / 180.0;
+
+    int bestAngle = 90; // Default to open
+    float lowestCost = 999999.0f;
+    
+    Serial.println("--- MPC OPTIMIZATION RUN [OVERHEAT] ---");
+    Serial.printf("Env: Temp=%.1fC, SunAz=%.1f, SunEl=%.1f\\n", temp, sunAz, sunEl);
+
+    // 1. Calculate Base Solar Heat Gain into the building window (without panel)
+    // cos(Window Incident Angle) = cos(SunEl) * cos(SunAz - FacadeAz)
+    double windowIncidentCos = cos(sunElRad) * cos(sunAzRad - facadeAzRad);
+    
+    // If the sun is behind the building (windowIncidentCos < 0), direct solar gain is zero.
+    double baseSolarLoad = max(0.0, windowIncidentCos);
+
+    // Evaluate candidates 0° (Closed Left) to 180° (Closed Right) in 15° increments
+    for (int candAngle = 0; candAngle <= 180; candAngle += 15) {
+        // Panel normal azimuth swings clockwise from the facade normal
+        double panelAzRad = (FACADE_AZIMUTH + candAngle) * PI / 180.0;
+        
+        // Incident angle: angle between Sun vector and Panel normal
+        // cos(Panel Incident Angle)
+        double panelIncidentCos = cos(sunElRad) * cos(sunAzRad - panelAzRad);
+        
+        // Shading Effectiveness: The shadow cast by the panel is proportional to its area facing the sun.
+        // We use abs() because the sun hitting the back of the panel casts the same shadow!
+        double shadowFactor = abs(panelIncidentCos);
+        
+        // Remaining Heat Gain: Base load minus what the panel blocks
+        // We ensure it doesn't drop below 0 (can't cool the room beyond blocking all sun)
+        double remainingSolarGain = max(0.0, baseSolarLoad - shadowFactor);
+        
+        // Daylight: physically open area (0° = closed, 90° = open, 180° = closed)
+        double daylight = sin(candAngle * PI / 180.0);
+        
+        // Cost Function:
+        // Minimize remaining solar heat gain (high penalty)
+        // Maximize daylight (negative cost)
+        // Add a tiny movement penalty from 90 to prevent oscillation if multiple angles block perfectly
+        double movementPenalty = abs(candAngle - 90) * 0.01;
+
+        float cost = (remainingSolarGain * 100.0) - (daylight * 10.0) + movementPenalty;
+        
+        Serial.printf("Cand %3d° -> BaseGain: %.2f, Shadow: %.2f, NetGain: %.2f, Daylight: %.2f, Cost: %.1f\\n", 
+                      candAngle, baseSolarLoad, shadowFactor, remainingSolarGain, daylight, cost);
+                      
+        if (cost < lowestCost) {
+            lowestCost = cost;
+            bestAngle = candAngle;
+        }
+    }
+    
+    Serial.printf("MPC Selected Target Angle: %d°\\n-------------------------\\n", bestAngle);
+    return bestAngle;
+}
+
+
 void loop() {
     if (!mqttClient.connected()) {
         reconnectMQTT();
@@ -191,7 +259,7 @@ void loop() {
             break;
 
         case SHADING:
-            currentAngle = 45; 
+            currentAngle = runMPCOptimization(temp); 
             char shadeBuf[16];
             snprintf(shadeBuf, sizeof(shadeBuf), "Shading: %.1fC", temp);
             updateLCD("OVERHEAT MODE", shadeBuf);

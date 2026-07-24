@@ -1,6 +1,7 @@
 import Papa from 'papaparse';
 
 export interface WeatherDataPoint {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any;
 }
 
@@ -26,6 +27,7 @@ export async function loadWeatherData(): Promise<WeatherDataPoint[]> {
         complete: (results) => {
           resolve(results.data as WeatherDataPoint[]);
         },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         error: (error: any) => {
           reject(error);
         }

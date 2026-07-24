@@ -14,7 +14,7 @@
   --glass-blur: 18px;
   --glass-saturate: 160%;
   --glass-bg: rgba(255, 255, 255, 0.04);
-  --glass-bg-strong: rgba(17, 24, 39, 0.55);
+  --glass-bg-strong: rgba(17, 24, 39, 0.85);
   --glass-border: rgba(255, 255, 255, 0.10);
   --glass-highlight: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.65);
@@ -157,51 +157,51 @@ section[id] {
 }
 
 /* Weather Intelligence — premium range slider ----------------------------- */
+/* Weather Intelligence — premium range slider ----------------------------- */
 .wx-range {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
-  height: 6px;
+  height: 4px;
   border-radius: 999px;
   background: transparent; /* visible track is painted by an underlay element */
   cursor: pointer;
 }
 .wx-range::-webkit-slider-runnable-track {
-  height: 6px;
+  height: 4px;
   border-radius: 999px;
   background: transparent;
 }
 .wx-range::-moz-range-track {
-  height: 6px;
+  height: 4px;
   border-radius: 999px;
   background: transparent;
 }
 .wx-range::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  height: 22px;
-  width: 22px;
-  margin-top: -8px;
+  height: 12px;
+  width: 12px;
+  margin-top: -4px;
   border-radius: 999px;
-  background: radial-gradient(circle at 35% 30%, #ffffff, var(--color-emerald) 70%);
-  border: 2px solid rgba(255, 255, 255, 0.85);
-  box-shadow: 0 0 0 4px rgba(0, 208, 132, 0.18), 0 0 22px 2px rgba(0, 208, 132, 0.6);
-  transition: transform 0.2s var(--ease-glass), box-shadow 0.2s var(--ease-glass);
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5), 0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), box-shadow 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 .wx-range::-webkit-slider-thumb:hover {
-  transform: scale(1.12);
-  box-shadow: 0 0 0 6px rgba(0, 208, 132, 0.22), 0 0 28px 4px rgba(0, 208, 132, 0.75);
+  transform: scale(1.2);
+  box-shadow: 0 0 15px rgba(255, 255, 255, 0.8), 0 2px 6px rgba(0, 0, 0, 0.6);
 }
 .wx-range::-moz-range-thumb {
-  height: 20px;
-  width: 20px;
+  height: 12px;
+  width: 12px;
   border-radius: 999px;
-  background: radial-gradient(circle at 35% 30%, #ffffff, var(--color-emerald) 70%);
-  border: 2px solid rgba(255, 255, 255, 0.85);
-  box-shadow: 0 0 0 4px rgba(0, 208, 132, 0.18), 0 0 22px 2px rgba(0, 208, 132, 0.6);
+  background: #ffffff;
+  border: none;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5), 0 2px 4px rgba(0, 0, 0, 0.5);
 }
 .wx-range:focus-visible::-webkit-slider-thumb {
-  outline: 2px solid var(--color-electric);
+  outline: 2px solid rgba(255, 255, 255, 0.5);
   outline-offset: 2px;
 }
 
@@ -212,6 +212,30 @@ section[id] {
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+}
+
+/* Slim, premium scrollbar for floating engineering panels (e.g. the Virtual
+   Embedded Controller). Overrides the global 10px "oversized" default with a
+   thin, subtle thumb that reveals on hover — professional desktop-window feel
+   without hiding the affordance entirely. */
+.slim-scrollbar {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+.slim-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.slim-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.slim-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  border: none;
+}
+.slim-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.5);
 }
 
 /* Accessible focus ring */
