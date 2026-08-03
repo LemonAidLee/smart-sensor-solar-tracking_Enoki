@@ -9,6 +9,7 @@ import type { NeighborBuilding } from './types'
 import { compassToWorld, type Vec3, v3 } from './math'
 
 export interface Aabb {
+  id?: string
   min: Vec3
   max: Vec3
 }
@@ -23,6 +24,7 @@ export function neighborPosition(n: NeighborBuilding): Vec3 {
 export function neighborAabb(n: NeighborBuilding): Aabb {
   const p = neighborPosition(n)
   return {
+    id: n.id,
     min: v3(p.x - n.width / 2, 0, p.z - n.depth / 2),
     max: v3(p.x + n.width / 2, n.height, p.z + n.depth / 2),
   }

@@ -1,11 +1,15 @@
 'use client'
 
-import { Cloud, Sun, Compass, Brain, type LucideIcon } from 'lucide-react'
+import { Cloud, Brain, FlaskConical, ShieldCheck, Sparkles, Workflow, Zap, MessageSquare, type LucideIcon } from 'lucide-react'
 import type { WindowId } from '@/lib/dt/windowStore'
+import { CyberPhysicalPipelineBody } from './CyberPhysicalPipeline'
 import { WeatherPanelBody } from './MetricsHUD'
-import { SolarGeometryBody } from './SolarGeometry'
-import { KinematicsBody } from './KinematicsInspector'
 import { PbifDecisionBody } from './PbifPanel'
+import { RooftopPvBody } from './RooftopPvPanel'
+import { AiPredictionBody } from './AiPredictionPanel'
+import { AiWhatIfBody } from './AiWhatIfPanel'
+import { AiAssistantBody } from './AiAssistantPanel'
+import { AiFddBody } from './AiFddPanel'
 
 /**
  * The single registry of engineering tools available in the Digital Twin
@@ -31,6 +35,20 @@ export interface WorkspaceTool {
 /** Windows open toward the left of the dock; each default X steps further in. */
 export const WORKSPACE_TOOLS: WorkspaceTool[] = [
   {
+    // The primary lens: the whole Environment → Sensor → Controller → Servo →
+    // Façade signal path as one guided, top-to-bottom story (see
+    // CyberPhysicalPipeline). The subsystem tools below remain as power-user
+    // shortcuts to the same engineering bodies it embeds.
+    id: 'pipeline',
+    label: 'Cyber-Physical Pipeline',
+    icon: Workflow,
+    accent: '#22d3ee',
+    defaultX: 0, // resolved at mount from viewport width (see resolveDefaultX)
+    defaultY: 96,
+    defaultW: 340,
+    Body: CyberPhysicalPipelineBody,
+  },
+  {
     id: 'weather',
     // The panel now presents both solar geometry AND atmospheric loads (the full
     // environmental state PBIF evaluates), so it reads as "Environmental
@@ -43,26 +61,7 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     defaultW: 288,
     Body: WeatherPanelBody,
   },
-  {
-    id: 'solar',
-    label: 'Solar Geometry',
-    icon: Sun,
-    accent: '#fbbf24',
-    defaultX: 0,
-    defaultY: 150,
-    defaultW: 300,
-    Body: SolarGeometryBody,
-  },
-  {
-    id: 'kinematics',
-    label: 'Panel Kinematics',
-    icon: Compass,
-    accent: '#34d399',
-    defaultX: 0,
-    defaultY: 188,
-    defaultW: 300,
-    Body: KinematicsBody,
-  },
+
   {
     id: 'pbif',
     label: 'PBIF Decision',
@@ -73,6 +72,79 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     defaultW: 300,
     Body: PbifDecisionBody,
   },
+  {
+    // The Rooftop PV plant is an independent engineering subsystem, not part of
+    // the building's adaptive-façade story — its engines (`pvArray`,
+    // `pvElectrical`, `pvInverter`) are siblings of the adaptive skin on
+    // `Simulation`, and Stage 7.1.5 deliberately excluded the array from the
+    // Cyber-Physical Façade pipeline. It therefore gets its own top-level tool
+    // rather than living inside the Building panel.
+    id: 'pv',
+    label: 'Rooftop PV',
+    icon: Zap,
+    accent: '#fb923c',
+    defaultX: 0,
+    defaultY: 264,
+    defaultW: 320,
+    Body: RooftopPvBody,
+  },
+]
+
+export const AI_TOOLS: WorkspaceTool[] = [
+  {
+    // The AI Prediction Layer (Stage 8.1) is an ADVISOR, not a subsystem of the
+    // twin: it observes what the engines published and projects it forward.
+    // PBIF remains the sole controller of the façade, so this tool sits beside
+    // the engineering panels rather than inside the pipeline. Its accent is
+    // deliberately unlike any subsystem's — nothing here is a live actuator.
+    id: 'ai',
+    label: 'AI Prediction',
+    icon: Sparkles,
+    accent: '#10b981', // Emerald/teal to distinguish AI tools
+    defaultX: 0,
+    defaultY: 302,
+    defaultW: 340,
+    Body: AiPredictionBody,
+  },
+  {
+    // AI What-If Analysis (Stage 8.2) — decision support rather than telemetry.
+    // It shares the AI accent with the Prediction panel because it is the same
+    // advisory layer asking a different question, and like it, controls nothing:
+    // studies run in a throwaway sandbox on the operator's command alone.
+    id: 'whatif',
+    label: 'AI What-If Analysis',
+    icon: FlaskConical,
+    accent: '#10b981',
+    defaultX: 0,
+    defaultY: 340,
+    defaultW: 348,
+    Body: AiWhatIfBody,
+  },
+  {
+    id: 'assistant',
+    label: 'Engineering Assistant',
+    icon: MessageSquare,
+    accent: '#10b981',
+    defaultX: 0,
+    defaultY: 378,
+    defaultW: 360,
+    Body: AiAssistantBody,
+  },
+  {
+    // AI Fault Detection & Diagnosis (Stage 8.5) — a read-only MONITOR, not a
+    // controller: it re-derives each subsystem's expected behaviour from
+    // published values and reports where the twin agrees or disagrees with
+    // its own physics. Shares the AI accent for the same reason the other
+    // advisory tools do — it commands nothing.
+    id: 'fdd',
+    label: 'AI Fault Detection & Diagnosis',
+    icon: ShieldCheck,
+    accent: '#10b981',
+    defaultX: 0,
+    defaultY: 416,
+    defaultW: 360,
+    Body: AiFddBody,
+  },
 ]
 
 /**
@@ -80,9 +152,10 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
  * cascading further left for each subsequent tool. Falls back gracefully during
  * SSR (no `window`) to a fixed inset.
  */
-export function resolveDefaultX(index: number, width: number): number {
+export function resolveDefaultX(index: number, width: number, isAiTool: boolean = false): number {
   const viewport = typeof window !== 'undefined' ? window.innerWidth : 1280
-  const dockGutter = 92 // clears the right-edge Tool Dock
+  // AiDock is placed further left than ToolDock, so its windows need more clearance
+  const dockGutter = isAiTool ? 144 : 92
   const base = viewport - dockGutter - width
   return Math.max(16, base - index * 36)
 }

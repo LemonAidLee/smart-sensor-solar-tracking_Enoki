@@ -12,13 +12,14 @@ import {
   type PbifEvaluation,
 } from '@/lib/pbif'
 import { solveForNormal, solarVector, transformSolarVector } from '@/lib/kinematics'
+import { BLADE_LABEL, formatBladeAngle } from '@/lib/dt/bladeAngle'
 
 /**
  * PbifPanel — the PBIF Decision & decision-flow visualization.
  *
  * Renders the full explainable chain for the current instant:
  *   Current Weather → Situation Assessment → PBIF Decision → Tracking Policy
- *   → Kinematics Solver → Panel Rotation (Current Façade Behaviour)
+ *   → Kinematics Solver → Target Blade Angle (Current Façade Behaviour)
  *
  * It shows WHY the decision was made (reason, priority, rule, confidence). All
  * data comes from the live PBIF evaluation computed in the engine each tick
@@ -99,18 +100,18 @@ function PbifBody({ evaluation }: { evaluation: PbifEvaluation }) {
             <span className="text-white/50">Tracking Deadband</span>
             <span className="font-mono text-white/80">{deadband.toFixed(1)}°</span>
             
-            <span className="text-white/50">Current Panel Angle</span>
-            <span className="font-mono text-white/80">{currentAngle.toFixed(1)}°</span>
-            
-            <span className="text-white/50">Current Target Angle</span>
-            <span className="font-mono text-white/80">{theoreticalTarget.toFixed(1)}°</span>
+            <span className="text-white/50">{BLADE_LABEL.current}</span>
+            <span className="font-mono text-white/80">{formatBladeAngle(currentAngle)}</span>
+
+            <span className="text-white/50">{BLADE_LABEL.target}</span>
+            <span className="font-mono text-white/80">{formatBladeAngle(theoreticalTarget)}</span>
             
             <span className="mt-0.5 border-t border-white/10 pt-1 text-white/50">Angular Difference</span>
             <span className="mt-0.5 border-t border-white/10 pt-1 font-mono font-bold text-white">{diff.toFixed(1)}°</span>
           </div>
           <div className="mt-2 rounded bg-black/20 p-1.5 text-center">
             <span className="text-[9px] font-semibold tracking-wide text-white/70">
-              {exceeds ? 'EXCEEDS DEADBAND → UPDATE PANEL ROTATION' : 'BELOW DEADBAND → HOLD POSITION'}
+              {exceeds ? 'EXCEEDS DEADBAND → UPDATE TARGET BLADE ANGLE' : 'BELOW DEADBAND → HOLD POSITION'}
             </span>
           </div>
           <div className="mt-1.5 flex justify-end">
@@ -214,7 +215,7 @@ function PbifBody({ evaluation }: { evaluation: PbifEvaluation }) {
 
       <Connector />
 
-      <FlowNode title="Final Panel Rotation" tone="muted">
+      <FlowNode title={BLADE_LABEL.target} tone="muted">
         <p className="text-[9px] text-white/45">
           Computed via {decision.facadeState === 'TRACKING' ? 'Kinematics Solver' : 'Closed Geometry Solver'}. PBIF never outputs an angle.
         </p>

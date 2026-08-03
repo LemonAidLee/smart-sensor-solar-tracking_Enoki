@@ -138,7 +138,7 @@ export function computeEmbeddedState(
     lcd: lcdLines(sim, mode, servo.servoPositionAngle),
     loopHz: LOOP_HZ,
     sensors: {
-      ldrUpper: ldrUpperSignal(sim),
+      ldrUpper: ldrUpperSignal(sim, panel.id),
       ldrLower: ldrLowerSignal(sim, panel),
       wind: windSignal(sim.weather),
       rain: rainSignal(sim.weather),

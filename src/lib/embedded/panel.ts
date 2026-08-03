@@ -12,7 +12,7 @@
 import type { Simulation } from '@/lib/engine/simulation'
 import type { FacadePanel } from '@/lib/engine/types'
 import type { FacadeControlMode } from '@/lib/engine/facadeControl'
-import { servoAngleToPwmMicros, worldRotationToServoAngle } from './servo'
+import { SERVO_SETTLED_DEG, servoAngleToPwmMicros, worldRotationToServoAngle } from './servo'
 
 /** The three status LEDs on the board, per the panel spec. */
 export interface LedState {
@@ -88,7 +88,7 @@ export function servoState(panel: FacadePanel): ServoState {
     servoCommandAngle,
     pwmMicros: servoAngleToPwmMicros(servoCommandAngle),
     servoPositionAngle,
-    moving: Math.abs(panel.targetRotation - panel.rotationAngle) > 0.5,
+    moving: Math.abs(panel.targetRotation - panel.rotationAngle) > SERVO_SETTLED_DEG,
   }
 }
 

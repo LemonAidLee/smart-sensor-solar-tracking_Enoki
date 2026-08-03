@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useEffect, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { getSimulation } from '@/lib/engine/simulation'
 import { useTwinStore } from '@/lib/engine/store'
@@ -14,6 +14,13 @@ export function SimDriver() {
   const sim = getSimulation()
   const pull = useTwinStore((s) => s.pull)
   const acc = useRef(0)
+
+  useEffect(() => {
+    if (useTwinStore.getState().weatherSource === 'forecast') {
+      useTwinStore.getState().returnToNow()
+      sim.liveForecast.start()
+    }
+  }, [sim])
 
   useFrame((_, dt) => {
     sim.tick(dt)

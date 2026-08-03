@@ -34,10 +34,10 @@ export const RAIN_LEVEL = {
   HEAVY: 0.65,
 } as const
 
-/** Cloud-cover thresholds for Solar Resource Assessment (0-1). */
-export const CLOUD_TO_SOLAR_RESOURCE = {
-  MEDIUM_THRESHOLD: 0.25, // Above this, resource is MEDIUM
-  LOW_THRESHOLD: 0.60,    // Above this, resource is LOW
+/** Simulated ADC thresholds for Solar Resource Assessment (0-4095). */
+export const ADC_TO_SOLAR_RESOURCE = {
+  HIGH_THRESHOLD: 4000,    // Above this, resource is HIGH (bright direct sunlight)
+  MEDIUM_THRESHOLD: 2000,  // Above this, resource is MEDIUM (cloudy/overcast)
 } as const
 
 /** Outdoor Temperature band edges for Thermal Demand, °C. */

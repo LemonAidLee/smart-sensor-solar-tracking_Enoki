@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import * as THREE from 'three'
 import { CurtainWall } from './CurtainWall'
 import { FacadeLayer } from './FacadeLayer'
+import { RoofSolarArray } from './RoofSolarArray'
 
 import { useTwinStore } from '@/lib/engine/store'
 import { deg2rad } from '@/lib/kinematics/vectorMath'
@@ -11,6 +12,7 @@ import { deg2rad } from '@/lib/kinematics/vectorMath'
 import { WEATHER_VALIDATION_MODE } from '@/lib/engine/validationMode'
 import { ActiveSurfaceHighlight } from './ActiveSurfaceHighlight'
 import { KinematicsDebug } from './KinematicsDebug'
+import { OcclusionDebug } from './OcclusionDebug'
 import { SelectedModuleHighlight } from './SelectedModuleHighlight'
 
 /**
@@ -43,9 +45,15 @@ export function BuildingMesh() {
     <group rotation={[0, -deg2rad(orientation), 0]}>
       <CurtainWall />
       <FacadeLayer meshRef={facadePanelMeshRef} />
+      <RoofSolarArray />
       {/* Building-mounted debug/annotation objects explicitly inherit the building transform */}
       {WEATHER_VALIDATION_MODE && <ActiveSurfaceHighlight />}
-      {WEATHER_VALIDATION_MODE && <KinematicsDebug />}
+      {WEATHER_VALIDATION_MODE && (
+        <>
+          <KinematicsDebug />
+          <OcclusionDebug />
+        </>
+      )}
       {WEATHER_VALIDATION_MODE && <SelectedModuleHighlight facadeMeshRef={facadePanelMeshRef} />}
     </group>
   )

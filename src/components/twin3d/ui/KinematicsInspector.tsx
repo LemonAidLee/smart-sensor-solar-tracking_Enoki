@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { getSimulation } from '@/lib/engine/simulation'
-import { useTwinStore } from '@/lib/engine/store'
+import { useTwinStore, getActiveDemonstrationSurface } from '@/lib/engine/store'
 import {
   PanelKinematics,
   solarVector,
@@ -12,6 +12,7 @@ import {
   type Vec3,
 } from '@/lib/kinematics'
 import { activeFacing } from '@/lib/engine/solarViz'
+import { BLADE_LABEL, describeBladeMotion, formatBladeAngle } from '@/lib/dt/bladeAngle'
 
 /**
  * KinematicsBody — the engineering "why did it rotate?" panel, rendered inside a
@@ -19,8 +20,13 @@ import { activeFacing } from '@/lib/engine/solarViz'
  *
  * For one selected façade surface it shows the pure-geometry chain the
  * RotationSolver used: solar vector → panel normal → incident angle → projected
- * exposure → commanded rotation, plus the A–E candidate comparison. Reads the live
+ * exposure → Target Blade Angle, plus the A–E candidate comparison. Reads the live
  * simulation each render; no decision logic of its own.
+ *
+ * Rotation is presented with the twin-wide vocabulary from `@/lib/dt/bladeAngle`
+ * (Current Blade Angle · Target Blade Angle · Servo Status) — this panel used to
+ * call the solver's output "Commanded Rotation", a third name for the same
+ * number.
  */
 export function KinematicsBody() {
   const snap = useTwinStore((s) => s.snapshot)
@@ -30,13 +36,7 @@ export function KinematicsBody() {
 
   const sim = getSimulation()
   const summaries = snap.surfaces
-  // Auto-select the most-lit surface when none is pinned.
-  const autoId = summaries.reduce(
-    (best, s) => (s.averageSolarExposure > (best?.averageSolarExposure ?? -1) ? s : best),
-    summaries[0],
-  )?.id
-  const chosenId = debugId ?? autoId
-  const surface = chosenId ? sim.skin.getSurface(chosenId) : undefined
+  const surface = getActiveDemonstrationSurface(sim, debugId)
 
   if (!surface) return <p className="text-[11px] text-white/45">No surface data.</p>
 
@@ -84,6 +84,7 @@ function InspectorBody({
   const curNormal = pk.normalAt(currentAngle)
   const curExposure = pk.exposureAt(currentAngle, solar)
   const curIncidence = pk.incidenceAt(currentAngle, solar)
+  const blade = describeBladeMotion(currentAngle, sol.targetAngle)
 
   return (
     <div className="space-y-3">
@@ -141,7 +142,7 @@ function InspectorBody({
         />
       </Accordion>
 
-      <Accordion title={`Panel Normal (n̂) at ${Math.round(wrap360(currentAngle))}°`}>
+      <Accordion title={`Panel Normal (n̂) at ${formatBladeAngle(currentAngle)}`}>
         <PipelineBlock 
           def="The perpendicular vector of the rotated panel face."
           system="Building Local Coordinates"
@@ -178,12 +179,101 @@ function InspectorBody({
 
       <Divider />
 
+      <h3 className="text-xs font-semibold text-emerald-400">Effective Irradiance Pipeline</h3>
+
+      <Accordion title="Attenuated GHI">
+        <PipelineBlock 
+          def="Global Horizontal Irradiance adjusted for local weather conditions."
+          system="W/m²"
+          inputs={['Raw GHI (Clear Sky)', 'Cloud Attenuation Factor']}
+          equation="GHI_raw × Cloud_Factor"
+          result="Available in Telemetry"
+        />
+      </Accordion>
+
+      <Accordion title="Direct Radiation">
+        <PipelineBlock 
+          def="The direct solar beam energy intercepted by the panel."
+          system="W/m²"
+          inputs={['Attenuated GHI', 'Cosine Projection', 'Occlusion Factor']}
+          equation="Attenuated_GHI × cos(θ) × Occlusion"
+          result="Calculated per panel"
+        />
+      </Accordion>
+
+      <Accordion title="Effective Irradiance">
+        <PipelineBlock 
+          def="Total solar energy reaching the adaptive facade module."
+          system="W/m²"
+          inputs={['Direct Radiation', 'Diffuse Sky Contribution']}
+          equation="Direct_Radiation + Diffuse_Sky"
+          result="Passed to Virtual Sensor"
+        />
+      </Accordion>
+
+      <Divider />
+
+      <h3 className="text-xs font-semibold text-cyan-400">Virtual Sensor Pipeline</h3>
+
+      <Accordion title="Illuminance Estimation">
+        <PipelineBlock 
+          def="Converts physical solar irradiance into estimated illuminance (lux)."
+          system="Lux"
+          inputs={['Effective Irradiance (W/m²)']}
+          equation="Irradiance × 120"
+          result="See Telemetry"
+        />
+      </Accordion>
+
+      <Accordion title="LDR Response">
+        <PipelineBlock 
+          def="Simulates Light Dependent Resistor (LDR) curve."
+          system="Ohms (Ω)"
+          inputs={['Illuminance (Lux)']}
+          equation="500 / Lux (capped at 10MΩ)"
+          result="See Telemetry"
+        />
+      </Accordion>
+
+      <Accordion title="Voltage Divider & ADC">
+        <PipelineBlock 
+          def="Converts LDR resistance into a digital 12-bit ADC reading."
+          system="12-bit ADC (0-4095)"
+          inputs={['LDR Resistance', 'Pull-down (10kΩ)', 'Vcc (3.3V)']}
+          equation="(10k / (R_ldr + 10k)) × 4095"
+          result="See Telemetry"
+        />
+      </Accordion>
+
+      <Accordion title="Digital Filter">
+        <PipelineBlock 
+          def="Applies a discrete low-pass exponential smoothing filter."
+          system="12-bit ADC (Filtered)"
+          inputs={['Raw ADC', 'Previous Filtered ADC', 'Alpha (dt / 0.5s)']}
+          equation="Prev + (Raw - Prev) × Alpha"
+          result="Consumed by PBIF"
+        />
+      </Accordion>
+
+      <Divider />
+
       <h3 className="text-xs font-semibold text-emerald-400">Solver Decision</h3>
       
       <div className="rounded-xl bg-white/[0.04] p-3 border border-white/5">
+        {/* One name for this quantity, everywhere — see `@/lib/dt/bladeAngle`. */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[11px] font-medium text-white/70">Commanded Rotation</span>
-          <span className="font-mono text-base font-bold text-emerald-400">{Math.round(wrap360(sol.targetAngle))}°</span>
+          <span className="text-[11px] font-medium text-white/70">{BLADE_LABEL.target}</span>
+          <span className="font-mono text-base font-bold text-emerald-400">{formatBladeAngle(sol.targetAngle)}</span>
+        </div>
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[11px] font-medium text-white/70">{BLADE_LABEL.current}</span>
+          <span className="font-mono text-[13px] font-semibold text-white/80">{formatBladeAngle(currentAngle)}</span>
+        </div>
+        <div className="mb-2 flex items-center justify-between border-b border-white/5 pb-2">
+          <span className="text-[11px] font-medium text-white/70">{BLADE_LABEL.servoStatus}</span>
+          <span className="text-[11px] font-semibold text-white/80">
+            {blade.moving ? `${blade.status} · ${blade.remaining} left` : blade.status}
+          </span>
         </div>
         <p className="text-[10px] text-white/70 mb-2 leading-relaxed">
           The panel rotates to <span className="text-emerald-300 font-medium">maximize interception of incoming solar radiation</span> by aligning its surface normal with the projected solar vector.

@@ -15,6 +15,7 @@
   --glass-saturate: 160%;
   --glass-bg: rgba(255, 255, 255, 0.04);
   --glass-bg-strong: rgba(17, 24, 39, 0.85);
+  --glass-bg-panel: rgba(17, 24, 39, 0.96);
   --glass-border: rgba(255, 255, 255, 0.10);
   --glass-highlight: rgba(255, 255, 255, 0.14);
   --glass-shadow: 0 20px 45px -20px rgba(0, 0, 0, 0.65);
@@ -94,6 +95,18 @@ section[id] {
   -webkit-backdrop-filter: blur(28px) saturate(var(--glass-saturate));
   border: 1px solid var(--glass-border);
   box-shadow: var(--glass-shadow);
+  transform: translateZ(0);
+  will-change: transform;
+}
+
+@utility glass-panel {
+  background: var(--glass-bg-panel);
+  backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+  -webkit-backdrop-filter: blur(28px) saturate(var(--glass-saturate));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 /* Specular top-edge sheen for glass panels (apply to a ::before-less element) */

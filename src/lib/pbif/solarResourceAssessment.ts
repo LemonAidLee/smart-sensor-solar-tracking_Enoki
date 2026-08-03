@@ -1,24 +1,23 @@
-import { CLOUD_TO_SOLAR_RESOURCE } from './thresholds'
+import { ADC_TO_SOLAR_RESOURCE } from './thresholds'
 import type { AssessedVariable } from './situationAssessment'
 
 export type SolarResourceState = 'LOW' | 'MEDIUM' | 'HIGH'
 
 /**
- * Estimate Solar Resource Assessment based on Cloud Cover.
- * Future versions may replace this with measured Solar Irradiance from a sensor.
+ * Estimate Solar Resource Assessment based on the simulated ESP32 ADC reading.
  */
-export function assessSolarResource(cloudCoverage: number): AssessedVariable<SolarResourceState> {
-  let state: SolarResourceState = 'HIGH'
+export function assessSolarResource(solarADC: number): AssessedVariable<SolarResourceState> {
+  let state: SolarResourceState = 'LOW'
   
-  if (cloudCoverage >= CLOUD_TO_SOLAR_RESOURCE.LOW_THRESHOLD) {
-    state = 'LOW'
-  } else if (cloudCoverage >= CLOUD_TO_SOLAR_RESOURCE.MEDIUM_THRESHOLD) {
+  if (solarADC >= ADC_TO_SOLAR_RESOURCE.HIGH_THRESHOLD) {
+    state = 'HIGH'
+  } else if (solarADC >= ADC_TO_SOLAR_RESOURCE.MEDIUM_THRESHOLD) {
     state = 'MEDIUM'
   }
   
   return { 
     state, 
-    value: cloudCoverage, // We preserve the input value (could be irradiance later)
-    display: state 
+    value: solarADC,
+    display: `${solarADC} (ADC)` 
   }
 }

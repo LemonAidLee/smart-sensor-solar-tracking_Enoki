@@ -23,6 +23,8 @@ import { getSimulation } from '@/lib/engine/simulation'
 import { useTwinStore } from '@/lib/engine/store'
 import { useModuleHighlightStore } from '@/lib/dt/moduleHighlightStore'
 import { computeEmbeddedState, pickUpperCentrePanel, type SensorSignal, type ServoState } from '@/lib/embedded'
+import { BLADE_LABEL, describeBladeMotion, formatBladeAngle } from '@/lib/dt/bladeAngle'
+import { LDR_QUADRANTS, isLdrQuadrant, ldrQuadrantSignals, withRelabelledPin } from './ldrQuadrants'
 import { SignalChain } from './SignalChain'
 import { LcdScreen } from './LcdScreen'
 import { Esp32Board, type BoardPin } from './Esp32Board'
@@ -107,8 +109,10 @@ const SIGNAL_TRANSLATION_REFERENCE: { sensor: string; chain: string[] }[] = [
 ]
 
 const SENSOR_ICON: Record<string, typeof Sun> = {
-  ldrUpper: Sun,
-  ldrLower: Sun,
+  ldrTopLeft: Sun,
+  ldrTopRight: Sun,
+  ldrBottomLeft: Sun,
+  ldrBottomRight: Sun,
   wind: WindIcon,
   rain: CloudRain,
   temperature: Thermometer,
@@ -334,6 +338,12 @@ export function VirtualEmbeddedPanel() {
   useEffect(() => {
     useModuleHighlightStore.getState().setPanelOpen(open)
   }, [open])
+  
+  const triggerOpen = useModuleHighlightStore((s) => s.triggerOpen)
+  useEffect(() => {
+    if (triggerOpen > 0) setOpen(true)
+  }, [triggerOpen])
+
   const targetScreen = useModuleHighlightStore((s) => s.screen)
 
   // Re-render on each throttled snapshot tick (same convention as PbifPanel /
@@ -352,11 +362,22 @@ export function VirtualEmbeddedPanel() {
   const panelId = useMemo(() => pickUpperCentrePanel(sim)?.id, [building, sim])
   const state = computeEmbeddedState(sim, panelId, { occupied, paused })
 
+  // The demonstration hardware presents four LDRs (one per quadrant) but the
+  // simulation still models only two light channels — see `ldrQuadrants.ts`.
+  const wind = withRelabelledPin(state.sensors.wind)
+  const rain = withRelabelledPin(state.sensors.rain)
+
   const pins: BoardPin[] = [
-    { id: 'ldrUpper', label: state.sensors.ldrUpper.gpioLabel, sublabel: 'LDR Upper', group: 'analog', side: 'left', raw: state.sensors.ldrUpper.raw },
-    { id: 'ldrLower', label: state.sensors.ldrLower.gpioLabel, sublabel: 'LDR Lower', group: 'analog', side: 'left', raw: state.sensors.ldrLower.raw },
-    { id: 'wind', label: state.sensors.wind.gpioLabel, sublabel: 'Wind', group: 'analog', side: 'left', raw: state.sensors.wind.raw },
-    { id: 'rain', label: state.sensors.rain.gpioLabel, sublabel: 'Rain', group: 'analog', side: 'left', raw: state.sensors.rain.raw },
+    ...LDR_QUADRANTS.map((q): BoardPin => ({
+      id: q.id,
+      label: q.gpioLabel,
+      sublabel: q.short,
+      group: 'analog',
+      side: 'left',
+      raw: state.sensors[q.source].raw,
+    })),
+    { id: 'wind', label: wind.gpioLabel, sublabel: 'Wind', group: 'analog', side: 'left', raw: wind.raw },
+    { id: 'rain', label: rain.gpioLabel, sublabel: 'Rain', group: 'analog', side: 'left', raw: rain.raw },
     { id: 'dht22', label: 'GPIO4', sublabel: 'DHT22 (T/H)', group: 'digital', side: 'left', raw: Math.max(state.sensors.temperature.raw, state.sensors.humidity.raw) },
     { id: 'pir', label: state.sensors.pir.gpioLabel, sublabel: 'PIR', group: 'digital', side: 'left', raw: state.sensors.pir.raw },
     { id: 'pauseSwitch', label: state.sensors.pauseSwitch.gpioLabel, sublabel: 'Pause SW', group: 'digital', side: 'left', raw: state.sensors.pauseSwitch.raw },
@@ -365,11 +386,10 @@ export function VirtualEmbeddedPanel() {
     { id: 'scl', label: 'I²C SCL', sublabel: 'LCD', group: 'i2c', side: 'right', raw: 0.5 },
   ]
 
-  const sensorList: SensorSignal[] = [
-    state.sensors.ldrUpper,
-    state.sensors.ldrLower,
-    state.sensors.wind,
-    state.sensors.rain,
+  const ldrSensors: SensorSignal[] = ldrQuadrantSignals(state.sensors)
+  const otherSensors: SensorSignal[] = [
+    wind,
+    rain,
     state.sensors.temperature,
     state.sensors.humidity,
     state.sensors.pir,
@@ -465,7 +485,7 @@ export function VirtualEmbeddedPanel() {
                     {state.available ? (
                       <>
                         <PreviewStat label="Loop" value={`${state.loopHz.toFixed(1)} Hz`} />
-                        <PreviewStat label="Servo" value={state.servo.moving ? 'MOVING' : 'HOLDING'} />
+                        <PreviewStat label="Servo" value={state.servo.moving ? 'Moving' : 'Holding'} />
                         <span className="text-[9px] font-medium text-electric">Click to open →</span>
                       </>
                     ) : (
@@ -505,12 +525,14 @@ export function VirtualEmbeddedPanel() {
       >
         <div className="flex items-center gap-2">
           <GripVertical className="h-3.5 w-3.5 text-white/25" />
-          <div className="grid h-7 w-7 place-items-center rounded-lg bg-electric/20">
-            <CircuitBoard className="h-4 w-4 text-electric" />
+          <div className="grid h-7 w-7 place-items-center rounded-lg bg-violet-400/20">
+            <Cpu className="h-4 w-4 text-violet-400" />
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-electric">Virtual Embedded Controller</p>
-            <p className="text-xs font-medium text-white/70">Façade Module · Upper Centre</p>
+            <p className="text-[9px] font-semibold tracking-wider text-violet-400/70 uppercase">
+              Cyber-Physical Pipeline › Stage 3
+            </p>
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-400">Virtual Embedded Controller</p>
           </div>
         </div>
         <button onClick={() => setOpen((o) => !o)} className="flex h-7 w-7 items-center justify-center rounded-full bg-white/5 hover:bg-white/10">
@@ -531,7 +553,19 @@ export function VirtualEmbeddedPanel() {
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <SectionLabel>Sensor Layer</SectionLabel>
-                  {sensorList.map((s) => (
+                  {/* Quadrant LDR array — four presented channels, two real
+                      ones (top pair and bottom pair each read identically). */}
+                  <GroupLabel>LDR Array · ADC0–ADC3</GroupLabel>
+                  {ldrSensors.map((s) => (
+                    <SensorRow
+                      key={s.id}
+                      signal={s}
+                      expanded={expandedSensor === s.id}
+                      onToggle={() => setExpandedSensor((cur) => (cur === s.id ? null : s.id))}
+                    />
+                  ))}
+                  <GroupLabel>Environment &amp; Inputs</GroupLabel>
+                  {otherSensors.map((s) => (
                     <SensorRow
                       key={s.id}
                       signal={s}
@@ -636,6 +670,17 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <p className="mb-1 text-[9px] font-semibold uppercase tracking-wider text-white/45">{children}</p>
 }
 
+/** Sub-heading inside the Sensor Layer list — separates the LDR array from the
+ *  remaining environmental/manual inputs without adding visual weight. */
+function GroupLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex items-center gap-1.5 pt-0.5 text-[8px] font-semibold uppercase tracking-[0.14em] text-white/30">
+      {children}
+      <span className="h-px flex-1 bg-white/10" />
+    </p>
+  )
+}
+
 function BoardStatusStrip({ loopHz, moving }: { loopHz: number; moving: boolean }) {
   return (
     <div className="grid grid-cols-3 gap-1.5">
@@ -677,13 +722,15 @@ function SensorRow({ signal, expanded, onToggle }: { signal: SensorSignal; expan
   // The LDR pipeline starts from the Engineering Inspector's own GHI (never
   // recomputed here) and ends at the literal firmware call that reads it —
   // reinforcing that the firmware only ever sees ADC counts, not lux/volts.
-  const isLdr = signal.id === 'ldrUpper' || signal.id === 'ldrLower'
+  const isLdr = isLdrQuadrant(signal.id)
   return (
     <div className="overflow-hidden rounded-lg bg-white/[0.03]">
       <button onClick={onToggle} className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-white/[0.03]">
         <Icon className="h-3 w-3 shrink-0 text-white/40" />
-        <span className="w-[64px] shrink-0 truncate text-[9.5px] text-white/70">{signal.name}</span>
-        <span className="ml-auto truncate font-mono text-[9px] text-white/45">{first.value}</span>
+        {/* Flexible width — the four quadrant names ("LDR Bottom Right") are
+            longer than the old fixed column allowed. */}
+        <span className="min-w-0 flex-1 truncate text-[9.5px] text-white/70">{signal.name}</span>
+        <span className="shrink-0 truncate font-mono text-[9px] text-white/45">{first.value}</span>
         <ChevronDown className={`h-3 w-3 shrink-0 text-white/30 transition-transform ${expanded ? 'rotate-180' : ''}`} />
         <span className="shrink-0 rounded bg-white/5 px-1 py-0.5 font-mono text-[9px] font-semibold text-electric">{last.value}</span>
       </button>
@@ -714,15 +761,22 @@ function ManualToggle({ icon: Icon, label, on, onClick }: { icon: typeof User; l
 }
 
 /**
+ * Outputs — the actuation story in the three terms used everywhere in the twin
+ * (`@/lib/dt/bladeAngle`): Target Blade Angle → Servo Status → Current Blade
+ * Angle. Nothing here is recomputed; every value comes from `servoState()`.
+ *
  * Building Kinematics vs. Embedded Hardware: `worldRotationTarget` is the
  * unbounded kinematic rotation the façade solver commands (may be well
  * outside 0–360°, e.g. -735° after many tracked rotations) — never what a
- * real actuator reads. The chain below folds it into the physical servo's
- * 0–180° travel and PWM signal (see `src/lib/embedded/servo.ts`) so the
- * Outputs panel shows what the ESP32-S3 is ACTUALLY commanding, not the
- * internal mathematical representation.
+ * real actuator reads. Folding it into the servo's physical 0–180° travel and
+ * PWM signal (see `src/lib/embedded/servo.ts`) is an implementation detail, so
+ * that chain now lives behind Advanced Servo Diagnostics rather than on the
+ * face of the panel.
  */
 function OutputsCard({ servo, led }: { servo: ServoState; led: { tracking: boolean; maintenance: boolean; override: boolean } }) {
+  const [advanced, setAdvanced] = useState(false)
+  // Named `blade`, not `motion` — `motion` is framer-motion's import here.
+  const blade = describeBladeMotion(servo.worldRotationCurrent, servo.worldRotationTarget)
   const steps = [
     { label: 'World Rotation', value: `${Math.round(servo.worldRotationTarget)}°` },
     { label: 'Servo Command', value: `${Math.round(servo.servoCommandAngle)}°` },
@@ -731,16 +785,52 @@ function OutputsCard({ servo, led }: { servo: ServoState; led: { tracking: boole
   ]
   return (
     <div className="space-y-2 rounded-xl bg-white/[0.03] p-2.5">
-      <SignalChain steps={steps} startTag="ESP32-S3" endTag="SERVO" />
-      <div className="flex items-center justify-between border-t border-white/5 pt-2">
-        <span className="text-[8px] uppercase tracking-wider text-white/40">Movement</span>
-        <span className="font-mono text-[10px] font-semibold text-white/85">{servo.moving ? 'MOVING' : 'HOLDING'}</span>
+      {/* 1 — where the controller wants the blade */}
+      <AngleReadout label={BLADE_LABEL.target} value={formatBladeAngle(servo.worldRotationTarget)} accent="text-electric" />
+      {/* 2 — what the motor is doing about it, in words */}
+      <div className="rounded-lg bg-white/[0.03] px-2 py-1.5">
+        <p className="text-[8px] uppercase tracking-wider text-white/40">{BLADE_LABEL.servoStatus}</p>
+        <p className="mt-0.5 text-[11px] font-semibold text-white/85">{blade.status}</p>
+        <p className="mt-0.5 font-mono text-[9px] text-white/45">
+          {blade.moving ? `${blade.progress} · ${blade.remaining} remaining` : blade.progress}
+        </p>
       </div>
+      {/* 3 — where the blade physically is */}
+      <AngleReadout label={BLADE_LABEL.current} value={formatBladeAngle(servo.worldRotationCurrent)} accent="text-white/85" note={blade.currentStatus} />
+
+      {/* Implementation detail, preserved but collapsed by default. */}
+      <div className="overflow-hidden rounded-lg border border-white/8">
+        <button
+          onClick={() => setAdvanced((o) => !o)}
+          className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[9px] font-medium text-white/45 transition-colors hover:bg-white/[0.03] hover:text-white/80"
+        >
+          {BLADE_LABEL.advanced}
+          <ChevronDown className={`h-3 w-3 transition-transform ${advanced ? 'rotate-180' : ''}`} />
+        </button>
+        {advanced && (
+          <div className="border-t border-white/8 p-2">
+            <SignalChain steps={steps} startTag="ESP32-S3" endTag="SERVO" />
+          </div>
+        )}
+      </div>
+
       <div className="flex items-center justify-center gap-4 border-t border-white/5 pt-2">
         <Led color="#00D084" on={led.tracking} label="Tracking" />
         <Led color="#fbbf24" on={led.maintenance} label="Maint." />
         <Led color="#ef4444" on={led.override} label="Override" />
       </div>
+    </div>
+  )
+}
+
+function AngleReadout({ label, value, accent, note }: { label: string; value: string; accent: string; note?: string }) {
+  return (
+    <div className="flex items-baseline justify-between rounded-lg bg-white/[0.03] px-2 py-1.5">
+      <div className="min-w-0">
+        <p className="text-[8px] uppercase tracking-wider text-white/40">{label}</p>
+        {note && <p className="mt-0.5 text-[9px] text-white/45">{note}</p>}
+      </div>
+      <span className={`shrink-0 font-mono text-[13px] font-bold ${accent}`}>{value}</span>
     </div>
   )
 }

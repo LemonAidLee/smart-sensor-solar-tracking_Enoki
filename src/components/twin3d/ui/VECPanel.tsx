@@ -16,6 +16,7 @@ import {
 import { useVecStore } from '@/lib/vec/store'
 import { useEdtStore } from '@/lib/edt/store'
 import type { ControllerKind, FirmwareState, LinkState } from '@/lib/vec/types'
+import { BLADE_LABEL } from '@/lib/dt/bladeAngle'
 
 const KINDS: { key: ControllerKind; label: string }[] = [
   { key: 'simulated', label: 'Virtual (Sim)' },
@@ -169,7 +170,7 @@ export function VECPanel() {
               <p className={`font-mono text-sm font-bold ${STATE_TONE[state]}`}>{state}</p>
             </div>
             <div className="rounded-xl bg-white/[0.03] px-3 py-2">
-              <p className="text-[9px] uppercase tracking-wider text-white/45">Servo angle</p>
+              <p className="text-[9px] uppercase tracking-wider text-white/45">{BLADE_LABEL.current}</p>
               <p className="font-mono text-sm font-bold text-white">{angle}°</p>
             </div>
           </div>

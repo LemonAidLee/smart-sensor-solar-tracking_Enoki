@@ -24,7 +24,7 @@ export * from './decisionEngine'
 export * from './trackingPolicy'
 export * from './thresholds'
 
-import { assessSituation, type WeatherInputs, type SituationAssessment } from './situationAssessment'
+import { assessSituation, type SensorInputs, type SituationAssessment } from './situationAssessment'
 import { assessThermalDemand, type ThermalDemandState } from './thermalDemandAssessment'
 import { assessSolarResource, type SolarResourceState } from './solarResourceAssessment'
 import { determineObjective, type OperationalObjective } from './operationalObjective'
@@ -45,10 +45,10 @@ export interface PbifEvaluation {
  * Run the whole chain once: weather → assessment → decision → policy. Pure and
  * cheap; the engine calls it once per tick and the UI reads the result.
  */
-export function evaluatePbif(weather: WeatherInputs): PbifEvaluation {
-  const situation = assessSituation(weather)
-  const thermalDemand = assessThermalDemand(weather.outdoorTemperature)
-  const solarResource = assessSolarResource(weather.cloudCoverage)
+export function evaluatePbif(inputs: SensorInputs): PbifEvaluation {
+  const situation = assessSituation(inputs)
+  const thermalDemand = assessThermalDemand(inputs.outdoorTemperature)
+  const solarResource = assessSolarResource(inputs.solarADC)
   
   const objective = determineObjective(situation, thermalDemand.state)
   const decision = decide(situation, thermalDemand.state, objective, solarResource.state)

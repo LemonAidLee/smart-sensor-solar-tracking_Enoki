@@ -4,7 +4,7 @@ import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { getSimulation } from '@/lib/engine/simulation'
-import { useTwinStore } from '@/lib/engine/store'
+import { useTwinStore, getActiveDemonstrationSurface } from '@/lib/engine/store'
 import { useVecStore } from '@/lib/vec/store'
 import { clamp, deg2rad, lerp } from '@/lib/engine/math'
 import { WEATHER_VALIDATION_MODE } from '@/lib/engine/validationMode'
@@ -46,6 +46,18 @@ const FIN_THICKNESS_MAX = 0.11
 const SHAFT_CLEARANCE = 0.3
 /** Floor on the cavity so the frame is always clear of the glass. */
 const MIN_CAVITY = 0.3
+/**
+ * Structural sizes of the second skin, as fractions of the bay pitch. The
+ * absolute values these replace were tuned for the old 4.2 m demonstration bays
+ * and read as heavy structure on the case study's 1.2 m adaptive module; scaling
+ * them keeps the frame/shaft proportion identical at any grid density. Bounded
+ * so they stay visible on a small module and sane on a large one.
+ */
+const FRAME_RAIL_RATIO = 0.09 // ≈107 mm rail on a 1.19 m bay
+const SHAFT_RATIO = 0.06 // ≈71 mm rotation shaft
+const BRACKET_RATIO = 0.1
+const sizeFor = (bay: number, ratio: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, bay * ratio))
 
 /** The engine bakes this standoff into every `worldPosition`/`surface.center`;
  *  offsets below are measured from the glass face, then rebased onto it. */
@@ -104,6 +116,9 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
   const debugAxesRef = useRef<THREE.AxesHelper>(null)
 
   const building = useTwinStore((s) => s.building)
+  const solarSelectedModuleId = useTwinStore((s) => s.solarSelectedModuleId)
+  const setSolarSelectedModule = useTwinStore((s) => s.setSolarSelectedModule)
+  
   // VEC panel-0 highlight is suppressed in Weather Validation Mode (no VEC).
   const vecEnabled = useVecStore((s) => s.enabled) && !WEATHER_VALIDATION_MODE
   const count = sim.skin.getAllPanels().length
@@ -121,27 +136,33 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
 
     for (const s of sim.skin.getAllSurfaces()) {
       const { cols } = surfaceGrid(s.panels)
-      const finW = (s.width / cols) * FIN_WIDTH_RATIO
+      const bay = s.width / cols
+      const finW = bay * FIN_WIDTH_RATIO
       const dnShaft = pivotDepthFromGlass(cavity, finW) - engineStandoff
       const dnBracket = (dnFrame + dnShaft) / 2
       const bracketLen = dnShaft - dnFrame
       const dvTab = s.height / 2 - Math.min(1.5, s.height * 0.06)
 
+      // Structural member sizes, proportioned to this elevation's bay pitch.
+      const railW = sizeFor(bay, FRAME_RAIL_RATIO, 0.06, 0.18)
+      const shaftW = sizeFor(bay, SHAFT_RATIO, 0.04, 0.1)
+      const bracketW = sizeFor(bay, BRACKET_RATIO, 0.05, 0.12)
+
       // Frame rails at bay boundaries + top/bottom rails (cavity plane).
       for (let c = 0; c <= cols; c++) {
         const du = (c / cols - 0.5) * s.width
-        frames.push(barMatrix(s.center, s.right, s.up, s.normal, du, 0, dnFrame, [0.18, s.height, 0.45]))
+        frames.push(barMatrix(s.center, s.right, s.up, s.normal, du, 0, dnFrame, [railW, s.height, 0.45]))
       }
-      frames.push(barMatrix(s.center, s.right, s.up, s.normal, 0, s.height / 2, dnFrame, [s.width, 0.26, 0.5]))
-      frames.push(barMatrix(s.center, s.right, s.up, s.normal, 0, -s.height / 2, dnFrame, [s.width, 0.26, 0.5]))
+      frames.push(barMatrix(s.center, s.right, s.up, s.normal, 0, s.height / 2, dnFrame, [s.width, railW * 1.45, 0.5]))
+      frames.push(barMatrix(s.center, s.right, s.up, s.normal, 0, -s.height / 2, dnFrame, [s.width, railW * 1.45, 0.5]))
 
       // Per bay: central shaft at pivot depth + two mounting brackets cantilevering
       // from the frame out to the shaft.
       for (let c = 0; c < cols; c++) {
         const du = ((c + 0.5) / cols - 0.5) * s.width
-        shafts.push(barMatrix(s.center, s.right, s.up, s.normal, du, 0, dnShaft, [0.1, s.height * 0.99, 0.1]))
-        brackets.push(barMatrix(s.center, s.right, s.up, s.normal, du, dvTab, dnBracket, [0.12, 0.16, bracketLen]))
-        brackets.push(barMatrix(s.center, s.right, s.up, s.normal, du, -dvTab, dnBracket, [0.12, 0.16, bracketLen]))
+        shafts.push(barMatrix(s.center, s.right, s.up, s.normal, du, 0, dnShaft, [shaftW, s.height * 0.99, shaftW]))
+        brackets.push(barMatrix(s.center, s.right, s.up, s.normal, du, dvTab, dnBracket, [bracketW, bracketW * 1.33, bracketLen]))
+        brackets.push(barMatrix(s.center, s.right, s.up, s.normal, du, -dvTab, dnBracket, [bracketW, bracketW * 1.33, bracketLen]))
       }
     }
     return { frames, brackets, shafts }
@@ -155,6 +176,7 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
     const n = Math.min(panels.length, count)
     const cavity = Math.max(MIN_CAVITY, sim.building.facadeDepth)
     const engineStandoff = engineStandoffOf(sim.building.facadeDepth)
+    
     for (let i = 0; i < n; i++) {
       const p = panels[i]
       const open = p.openness
@@ -214,6 +236,7 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
         const pulse = 0.8 + 0.2 * Math.sin(performance.now() * 0.005)
         color.setRGB(0.5 * pulse, 1.5 * pulse, 3.0 * pulse)
       }
+      
       m.setColorAt(i, color)
     }
     m.instanceMatrix.needsUpdate = true
@@ -245,6 +268,16 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
         args={[finGeom, undefined as unknown as THREE.Material, count]}
         castShadow
         receiveShadow
+        onPointerDown={(e) => {
+          if (!WEATHER_VALIDATION_MODE) return
+          e.stopPropagation()
+          if (e.instanceId !== undefined) {
+            const panels = sim.skin.getAllPanels()
+            if (panels[e.instanceId]) {
+              setSolarSelectedModule(panels[e.instanceId].id)
+            }
+          }
+        }}
       >
         <meshPhysicalMaterial metalness={0.85} roughness={0.35} clearcoat={0.3} clearcoatRoughness={0.2} envMapIntensity={1.2} />
       </instancedMesh>

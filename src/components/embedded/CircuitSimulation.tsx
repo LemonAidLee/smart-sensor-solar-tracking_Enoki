@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { LcdScreen } from './LcdScreen'
 import { Esp32Board, type BoardPin } from './Esp32Board'
+import { LDR_QUADRANTS, ldrQuadrantSignals } from './ldrQuadrants'
 import type { EmbeddedState } from '@/lib/embedded'
 
 interface CircuitProps {
@@ -14,13 +15,62 @@ interface CircuitProps {
 const W = 1000
 const H = 820
 
+/**
+ * Four-LDR quadrant array — layout of the sub-block inside the Input Devices
+ * zone. The left-hand column is drawn mirrored so every module's header pins
+ * face OUTWARD; each wire then leaves the array through its own vertical lane.
+ * The top row deliberately takes the outer lane of its side: its horizontal run
+ * sits above the height at which the bottom row's vertical starts, so the four
+ * wires never cross one another inside the array.
+ */
+const LDR_ARRAY = {
+  zone: { x: 52, y: 58, w: 244, h: 110 },
+  moduleW: 64,
+  moduleH: 32,
+  /** Left / right column origins — the gap to the zone's left edge carries the
+   *  sub-zone caption and the two left-hand drop lanes. */
+  cols: [116, 192],
+  /** Top / bottom row origins. Each module's own caption sits 11px beneath it. */
+  rows: [66, 114],
+  /** Y offset (within a module) of the AO header pin the signal wire leaves from. */
+  exitDy: 26,
+} as const
+
+const LDR_LAYOUT: Record<string, { col: 0 | 1; row: 0 | 1; lane: number }> = {
+  ldrTopLeft: { col: 0, row: 0, lane: 68 },
+  ldrTopRight: { col: 1, row: 0, lane: 286 },
+  ldrBottomLeft: { col: 0, row: 1, lane: 90 },
+  ldrBottomRight: { col: 1, row: 1, lane: 268 },
+}
+
+/** Wire colour follows the SOURCE channel, so the pairs that always read the
+ *  same value are also drawn the same colour (unchanged from the 2-LDR build). */
+const LDR_WIRE_COLOR: Record<'ldrUpper' | 'ldrLower', string> = {
+  ldrUpper: '#a855f7',
+  ldrLower: '#22c55e',
+}
+
+/** Where a quadrant's signal wire leaves its module, plus its drop lane. */
+function ldrExit(id: string) {
+  const l = LDR_LAYOUT[id]
+  const x = LDR_ARRAY.cols[l.col]
+  return {
+    x: l.col === 0 ? x - 2 : x + LDR_ARRAY.moduleW + 2,
+    y: LDR_ARRAY.rows[l.row] + LDR_ARRAY.exitDy,
+    lane: l.lane,
+  }
+}
+
 export function CircuitSimulation({ state, pins }: CircuitProps) {
   const [hovered, setHovered] = useState<HoverData | null>(null)
 
   // Central Controller Zone
   const espX = 350
   const espY = 295
-  
+
+  // Four presented channels, two real ones — see `ldrQuadrants.ts`.
+  const ldrSignals = ldrQuadrantSignals(state.sensors)
+
   return (
     <div className="relative w-full rounded-2xl border border-white/10 bg-[#e5e5e5] shadow-inner overflow-hidden aspect-[5/4] select-none" style={{ backgroundColor: '#1a1f2e' }}>
       
@@ -39,9 +89,9 @@ export function CircuitSimulation({ state, pins }: CircuitProps) {
         
         <g className="text-white/40 font-mono text-[13px] font-bold tracking-widest pointer-events-none uppercase">
           {/* Inputs Zone */}
-          <rect x="40" y="40" width="920" height="120" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 4" rx="4" />
+          <rect x="40" y="40" width="920" height="136" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 4" rx="4" />
           <text x="50" y="55" fill="currentColor">Input Devices</text>
-          
+
           {/* Controller Zone */}
           <rect x="330" y="270" width="340" height="260" fill="transparent" stroke="rgba(255,255,255,0.15)" strokeWidth="1" strokeDasharray="4 4" rx="4" />
           <text x="340" y="285" fill="currentColor">Controller</text>
@@ -51,12 +101,54 @@ export function CircuitSimulation({ state, pins }: CircuitProps) {
           <text x="230" y="615" fill="currentColor">Output Devices</text>
         </g>
 
+        {/* LDR quadrant array sub-zone — drawn outside the zone-label <g> so its
+            own (smaller) font sizes are not overridden by that group's classes. */}
+        <g pointerEvents="none">
+          <rect
+            x={LDR_ARRAY.zone.x}
+            y={LDR_ARRAY.zone.y}
+            width={LDR_ARRAY.zone.w}
+            height={LDR_ARRAY.zone.h}
+            fill="rgba(255,255,255,0.015)"
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            rx="4"
+          />
+          {/* Sits in the left margin above the drop lanes — clear of both the
+              modules and their captions. */}
+          <text
+            x={LDR_ARRAY.zone.x + 4}
+            y={LDR_ARRAY.zone.y + 12}
+            fontSize="9"
+            fontFamily="monospace"
+            fontWeight="bold"
+            letterSpacing="0.08em"
+            fill="rgba(255,255,255,0.32)"
+          >
+            LDR ARRAY
+          </text>
+        </g>
+
         {/* Wires */}
         <Wiring state={state} pins={pins} espX={espX} espY={espY} />
 
         {/* Modules - Inputs (Top) */}
-        <LdrModule x={60} y={90} label="LDR Upper" value={state.sensors.ldrUpper} onHover={setHovered} />
-        <LdrModule x={190} y={90} label="LDR Lower" value={state.sensors.ldrLower} onHover={setHovered} />
+        {LDR_QUADRANTS.map((q, i) => {
+          const l = LDR_LAYOUT[q.id]
+          return (
+            <LdrModule
+              key={q.id}
+              x={LDR_ARRAY.cols[l.col]}
+              y={LDR_ARRAY.rows[l.row]}
+              label={q.name}
+              caption={q.name.slice('LDR '.length).toUpperCase()}
+              value={ldrSignals[i]}
+              flip={l.col === 0}
+              onHover={setHovered}
+            />
+          )
+        })}
         <DhtModule x={330} y={80} temp={state.sensors.temperature} hum={state.sensors.humidity} onHover={setHovered} />
         <PotModule x={460} y={70} label="Wind" value={state.sensors.wind} onHover={setHovered} />
         <PotModule x={580} y={70} label="Rain" value={state.sensors.rain} onHover={setHovered} />
@@ -134,6 +226,15 @@ function Wiring({ pins, espX, espY }: { state: EmbeddedState, pins: BoardPin[], 
     return `M ${x1},${y1} V ${busY} H ${routeX} V ${y2} H ${x2}`
   }
 
+  /**
+   * LDR array wire: leave the module sideways, run to that quadrant's own
+   * vertical lane, drop, then run in to the ESP32 pin.
+   */
+  const ldrWire = (id: string, pinY: number) => {
+    const { x, y, lane } = ldrExit(id)
+    return `M ${x},${y} H ${lane} V ${pinY} H ${leftX}`
+  }
+
   const busTop = 210
   const busBottom = 550
 
@@ -148,8 +249,9 @@ function Wiring({ pins, espX, espY }: { state: EmbeddedState, pins: BoardPin[], 
         
         const spread = (i - 3) * 4 // Stagger bus lines slightly for bundled look
         
-        if (p.id === 'ldrUpper') { path = orthoWire(120, 122, leftX, y, busTop + spread, 120); color = '#a855f7' }
-        if (p.id === 'ldrLower') { path = orthoWire(250, 122, leftX, y, busTop + spread, 250); color = '#22c55e' }
+        const quadrant = LDR_QUADRANTS.find((q) => q.id === p.id)
+        if (quadrant) { path = ldrWire(quadrant.id, y); color = LDR_WIRE_COLOR[quadrant.source] }
+
         if (p.id === 'dht22') { path = orthoWire(346, 128, leftX, y, busTop + spread, 346); color = '#eab308' }
         if (p.id === 'wind') { path = orthoWire(490, 110, leftX, y, busTop + spread, 490); color = '#f59e0b' }
         if (p.id === 'rain') { path = orthoWire(610, 110, leftX, y, busTop + spread, 610); color = '#3b82f6' }
@@ -245,30 +347,41 @@ function InteractiveGroup({ x, y, children, onHover, data, className, hitboxX = 
 
 // ─── Hardware Modules ───────────────────────────────────────────────────
 
-function LdrModule({ x, y, label, value, onHover, hidden }: any) {
+/**
+ * One photoresistor breakout. `flip` mirrors the board so its header pins face
+ * left instead of right — used for the array's left-hand column so all four
+ * signal wires leave the quadrant block outward (see `LDR_ARRAY`). Only the
+ * artwork is mirrored; the text stays upright and is positioned to match.
+ */
+function LdrModule({ x, y, label, caption, value, flip = false, onHover }: any) {
+  const w = LDR_ARRAY.moduleW
+  const h = LDR_ARRAY.moduleH
   return (
-    <InteractiveGroup x={x} y={y} onHover={onHover} hitboxW={64} hitboxH={32} data={{
+    <InteractiveGroup x={x} y={y} onHover={onHover} hitboxW={w} hitboxH={h} data={{
       name: label, pin: value.gpioLabel, reading: value.steps[value.steps.length-1].value, unit: '', purpose: 'Measures incident daylight (simulated photoresistor).'
     }}>
-      <rect width="64" height="32" rx="2" fill="#172554" />
-      {/* IC and resistors */}
-      <rect x="20" y="8" width="6" height="4" fill="#000" />
-      <rect x="20" y="20" width="4" height="3" fill="#000" />
-      {/* Photoresistor (Silver face, red squiggly) */}
-      <circle cx="10" cy="16" r="7" fill="#f3f4f6" stroke="#9ca3af" strokeWidth="1.5" />
-      <path d="M 5,16 Q 7,10 10,16 T 15,16" fill="none" stroke="#ef4444" strokeWidth="1" />
-      {/* Trimmer pot (Blue block, brass dial) */}
-      <rect x="30" y="8" width="12" height="16" fill="#1d4ed8" rx="1" />
-      <circle cx="36" cy="16" r="4.5" fill="#fcd34d" />
-      <line x1="33" y1="13" x2="39" y2="19" stroke="#b45309" strokeWidth="1.5" />
-      {/* 4 Header Pins */}
-      {[6, 12.5, 19.5, 26].map(py => (
-        <g key={py}>
-          <rect x="58" y={py - 1.5} width="6" height="3" fill="#cbd5e1" />
-          <circle cx="56" cy={py} r="1.5" fill="#fcd34d" />
-        </g>
-      ))}
-      <text x="53" y="27" fontSize="8" fontWeight="bold" fill="#cbd5e1" textAnchor="end">AO</text>
+      <g transform={flip ? `translate(${w}, 0) scale(-1, 1)` : undefined}>
+        <rect width={w} height={h} rx="2" fill="#172554" />
+        {/* IC and resistors */}
+        <rect x="20" y="8" width="6" height="4" fill="#000" />
+        <rect x="20" y="20" width="4" height="3" fill="#000" />
+        {/* Photoresistor (Silver face, red squiggly) */}
+        <circle cx="10" cy="16" r="7" fill="#f3f4f6" stroke="#9ca3af" strokeWidth="1.5" />
+        <path d="M 5,16 Q 7,10 10,16 T 15,16" fill="none" stroke="#ef4444" strokeWidth="1" />
+        {/* Trimmer pot (Blue block, brass dial) */}
+        <rect x="30" y="8" width="12" height="16" fill="#1d4ed8" rx="1" />
+        <circle cx="36" cy="16" r="4.5" fill="#fcd34d" />
+        <line x1="33" y1="13" x2="39" y2="19" stroke="#b45309" strokeWidth="1.5" />
+        {/* 4 Header Pins */}
+        {[6, 12.5, 19.5, 26].map(py => (
+          <g key={py}>
+            <rect x={w - 6} y={py - 1.5} width="6" height="3" fill="#cbd5e1" />
+            <circle cx={w - 8} cy={py} r="1.5" fill="#fcd34d" />
+          </g>
+        ))}
+      </g>
+      <text x={flip ? 11 : w - 11} y="27" fontSize="8" fontWeight="bold" fill="#cbd5e1" textAnchor={flip ? 'start' : 'end'}>AO</text>
+      <text x={w / 2} y={h + 11} fontSize="9" fontWeight="bold" fill="#94a3b8" textAnchor="middle" letterSpacing="0.06em">{caption}</text>
     </InteractiveGroup>
   )
 }

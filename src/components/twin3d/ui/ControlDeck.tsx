@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import {
   Blinds,
-  Boxes,
   Building2,
   ChevronDown,
   CloudLightning,
@@ -20,11 +19,19 @@ import {
   Wrench,
 } from 'lucide-react'
 import { useTwinStore } from '@/lib/engine/store'
-import type { BuildingShape, GlassType, SkinMode } from '@/lib/engine/types'
+import type { GlassType, SkinMode } from '@/lib/engine/types'
 import { STATE_LABEL } from '@/lib/engine/panelStates'
+import { NOMINAL_MODULE_HEIGHT_M, NOMINAL_MODULE_WIDTH_M } from '@/lib/engine/facadeModule'
 import { bearingToSvg } from '@/lib/engine/solarViz'
 import { WEATHER_VALIDATION_MODE, MANUAL_MAX } from '@/lib/engine/validationMode'
 import { Slider } from './Slider'
+import {
+  ScenarioOwnershipNotice,
+  WeatherScenarioControls,
+  WeatherSourceSelector,
+} from './WeatherScenarioPanel'
+import { ForecastControls } from './ForecastPanel'
+import { getWeatherScenario } from '@/lib/engine/weatherScenario'
 import { motion, AnimatePresence } from 'framer-motion'
 
 type Tab = 'building' | 'site' | 'weather' | 'skin'
@@ -34,14 +41,6 @@ const TABS: { key: Tab; label: string; icon: typeof Building2 }[] = [
   { key: 'site', label: 'Site', icon: TreePine },
   { key: 'weather', label: 'Weather', icon: CloudRain },
   { key: 'skin', label: 'Skin', icon: Blinds },
-]
-
-const SHAPES: { key: BuildingShape; label: string; icon: React.FC<any> }[] = [
-  { key: 'rectangle', label: 'Box', icon: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}><rect x="4" y="4" width="16" height="16" rx="2" /></svg> },
-  { key: 'triangle', label: 'Triangle', icon: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}><polygon points="12 4 4 20 20 20" strokeLinejoin="round" /></svg> },
-  { key: 'hexagon', label: 'Hexagon', icon: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}><polygon points="12 3 20 7.5 20 16.5 12 21 4 16.5 4 7.5" strokeLinejoin="round" /></svg> },
-  { key: 'cylinder', label: 'Cylinder', icon: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v12c0 1.66 3.58 3 8 3s8-1.34 8-3V6" /></svg> },
-  { key: 'lshape', label: 'L-Shape', icon: (p) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" {...p}><polygon points="4 4 10 4 10 14 20 14 20 20 4 20" strokeLinejoin="round" /></svg> },
 ]
 
 const PROGRAMS: { key: SkinMode; label: string; icon: typeof Building2 }[] = [
@@ -65,11 +64,19 @@ export function ControlDeck() {
   const building = useTwinStore((s) => s.building)
   const neighbors = useTwinStore((s) => s.neighbors)
   const weather = useTwinStore((s) => s.weather)
+  const weatherSource = useTwinStore((s) => s.weatherSource)
+  const weatherScenarioId = useTwinStore((s) => s.weatherScenarioId)
+  const weatherStatus = useTwinStore((s) => s.snapshot.weatherSource)
+  const forecast = useTwinStore((s) => s.snapshot.forecast)
   const skinMode = useTwinStore((s) => s.skinMode)
   const manualRotation = useTwinStore((s) => s.manualRotation)
   const facadeControlMode = useTwinStore((s) => s.facadeControlMode)
   const trackingIntent = useTwinStore((s) => s.trackingIntent)
   const powerLoss = useTwinStore((s) => s.powerLoss)
+  /** As-built adaptive-façade layout — real panel counts/areas, not a re-derived
+   *  formula (see `summariseFacadeLayout`). Rooftop PV metrics deliberately do
+   *  NOT appear here; they live in the dedicated Rooftop PV panel. */
+  const facade = useTwinStore((s) => s.snapshot.facade)
 
   const s = useTwinStore.getState()
   const [isExpanded, setIsExpanded] = useState(false)
@@ -109,8 +116,10 @@ export function ControlDeck() {
             <div className="mt-4 border-t border-white/5 pt-4">
               {tab === 'building' && (
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
-                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Geometry</p><p className="text-[11px] font-medium capitalize text-white/90">{building.shape}</p></div>
-                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Height</p><p className="font-mono text-[11px] font-medium text-white/90">{Math.round(building.height)} m</p></div>
+                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Programme</p><p className="text-[11px] font-medium text-white/90">{building.buildingType}</p></div>
+                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Storeys</p><p className="font-mono text-[11px] font-medium text-white/90">{building.floorCount} · {building.height.toFixed(1)} m</p></div>
+                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Footprint</p><p className="font-mono text-[11px] font-medium text-white/90">{Math.round(building.width)} × {Math.round(building.depth)} m</p></div>
+                  <div><p className="text-[9px] uppercase tracking-widest text-white/40">Adaptive Panels</p><p className="font-mono text-[11px] font-medium text-white/90">{facade.totalPanels.toLocaleString()}</p></div>
                   <div className="col-span-2"><p className="text-[9px] uppercase tracking-widest text-white/40">Orientation</p><p className="text-[11px] font-medium text-emerald-400">{getCompassLabel(building.orientation)} <span className="font-mono text-white/60">({Math.round(building.orientation)}°)</span></p></div>
                 </div>
               )}
@@ -124,6 +133,28 @@ export function ControlDeck() {
                 <div className="grid grid-cols-2 gap-x-4 gap-y-3">
                   <div><p className="text-[9px] uppercase tracking-widest text-white/40">Temp</p><p className="font-mono text-[11px] font-medium text-white/90">{weather.temperature.toFixed(1)} °C</p></div>
                   <div><p className="text-[9px] uppercase tracking-widest text-white/40">Cloud / Rain</p><p className="font-mono text-[11px] font-medium text-white/90">{Math.round(weather.cloudCoverage*100)}% / {Math.round(weather.rainIntensity*100)}%</p></div>
+                  {weatherSource === 'scenario' && (
+                    <div className="col-span-2">
+                      <p className="text-[9px] uppercase tracking-widest text-white/40">Scenario</p>
+                      <p className="text-[11px] font-medium text-emerald-400">
+                        {getWeatherScenario(weatherScenarioId)?.name ?? '—'}
+                        <span className="ml-1.5 text-white/60">
+                          · {getWeatherScenario(weatherScenarioId)?.timeline[weatherStatus.activeIndex]?.label ?? ''}
+                        </span>
+                      </p>
+                    </div>
+                  )}
+                  {weatherSource === 'forecast' && (
+                    <div className="col-span-2">
+                      <p className="text-[9px] uppercase tracking-widest text-white/40">Forecast</p>
+                      <p className="text-[11px] font-medium text-emerald-400">
+                        {forecast.providerName}
+                        <span className="ml-1.5 text-white/60">
+                          · {forecast.connection === 'online' ? 'Connected' : forecast.connection === 'cached' ? 'Cached forecast' : 'Offline'}
+                        </span>
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
               {tab === 'skin' && (
@@ -198,34 +229,50 @@ export function ControlDeck() {
                     </div>
                   </div>
 
-                  {/* Geometry Widget */}
+                  {/* Geometry — the locked engineering specification (guide §18).
+                      Read-only: the massing is the project report's case study,
+                      not something the operator tunes. Orientation above remains
+                      the one interactive building parameter. */}
                   <div>
                     <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-white/50">Geometry</p>
-                    <div className="grid grid-cols-5 gap-1.5">
-                      {SHAPES.map((sh) => {
-                        const active = building.shape === sh.key
-                        return (
-                          <button
-                            key={sh.key}
-                            onClick={() => s.setBuilding({ shape: sh.key })}
-                            className={`flex flex-col items-center justify-center gap-2 rounded-xl border p-2 transition-all ${
-                              active 
-                                ? 'border-emerald-400/30 bg-emerald-400/10 text-emerald-400 shadow-[inset_0_0_15px_rgba(0,208,132,0.1)]' 
-                                : 'border-white/5 bg-white/[0.02] text-white/40 hover:border-white/20 hover:text-white/80'
-                            }`}
-                          >
-                            <sh.icon className="h-5 w-5" />
-                            <span className="text-[9px] tracking-wider">{sh.label}</span>
-                          </button>
-                        )
-                      })}
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-[16px] border border-white/5 bg-white/[0.02] p-3">
+                      <Spec label="Programme" value={building.buildingType} className="col-span-2" />
+                      <Spec label="Storeys" value={`${building.floorCount}`} />
+                      <Spec label="Building Height" value={`${building.height.toFixed(1)} m`} />
+                      <Spec label="Width" value={`${Math.round(building.width)} m`} />
+                      <Spec label="Length" value={`${Math.round(building.depth)} m`} />
                     </div>
                   </div>
 
-                  {/* Dimensions */}
-                  <div className="space-y-4">
-                    <Slider label="Height" value={building.height} min={60} max={280} step={2} display={`${Math.round(building.height)} m`} accent="#00D084" onChange={(v) => s.setBuilding({ height: v })} />
-                    <Slider label="Width" value={building.width} min={30} max={110} step={1} display={`${Math.round(building.width)} m`} accent="#00D084" onChange={(v) => s.setBuilding({ width: v })} />
+                  {/* Adaptive façade — measured off the panels the Geometry
+                      Engine actually generated (`summariseFacadeLayout`), never a
+                      parallel formula. */}
+                  <div>
+                    <p className="mb-2 text-[10px] font-medium uppercase tracking-[0.15em] text-white/50">Adaptive Façade</p>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-[16px] border border-white/5 bg-white/[0.02] p-3">
+                      <Spec
+                        label="Nominal Module"
+                        value={`${NOMINAL_MODULE_WIDTH_M.toFixed(2)} × ${NOMINAL_MODULE_HEIGHT_M.toFixed(2)} m`}
+                      />
+                      <Spec
+                        label="As-Built Module"
+                        value={
+                          facade.moduleWidth[0] === facade.moduleWidth[1]
+                            ? `${facade.moduleWidth[0].toFixed(3)} × ${facade.moduleHeight.toFixed(3)} m`
+                            : `${facade.moduleWidth[0].toFixed(3)}–${facade.moduleWidth[1].toFixed(3)} × ${facade.moduleHeight.toFixed(3)} m`
+                        }
+                      />
+                      <Spec
+                        label="Grid"
+                        value={`${facade.columnsPerRing} Columns`}
+                        secondary={`${facade.rowsPerFloor} Rows / Storey`}
+                      />
+                      <Spec label="Floor-to-Floor" value={`${facade.floorToFloor.toFixed(2)} m`} />
+                      <Spec label="Panels / Floor" value={facade.panelsPerFloor.toLocaleString()} />
+                      <Spec label="Total Panels" value={facade.totalPanels.toLocaleString()} />
+                      <Spec label="Façade Area" value={`≈${facade.facadeArea.toLocaleString()} m²`} />
+                      <Spec label="Envelope" value={`${facade.surfaceCount} Elevations`} />
+                    </div>
                   </div>
 
                   {!WEATHER_VALIDATION_MODE && (
@@ -252,6 +299,11 @@ export function ControlDeck() {
                       </div>
                     </div>
                   )}
+
+                  {/* The Rooftop PV plant is NOT building engineering — it is an
+                      independent subsystem with its own top-level panel on the
+                      Tool Dock (see RooftopPvPanel.tsx). Nothing about energy
+                      generation belongs here. */}
                 </div>
               )}
 
@@ -316,17 +368,37 @@ export function ControlDeck() {
               )}
 
               {/* WEATHER ------------------------------------------------------------- */}
+              {/* Manual keeps the original sliders untouched; Scenario hands the
+                  conditions to the Weather Scenario Engine (Stage 7.7). */}
               {tab === 'weather' && (
                 <div className="space-y-6">
-                  <Slider label="Temperature" value={weather.temperature} min={16} max={44} step={0.5} display={`${weather.temperature.toFixed(1)}°C`} accent="#f97316" onChange={(v) => s.setWeather({ temperature: v })} />
-                  <Slider label="Humidity" value={weather.humidity} min={20} max={100} step={1} display={`${Math.round(weather.humidity)}%`} accent="#38BDF8" onChange={(v) => s.setWeather({ humidity: v })} />
-                  <Slider label="Cloud cover" value={weather.cloudCoverage} min={0} max={1} step={0.01} display={`${Math.round(weather.cloudCoverage * 100)}%`} accent="#94a3b8" onChange={(v) => s.setWeather({ cloudCoverage: v })} />
-                  <Slider label="Rain" value={weather.rainIntensity} min={0} max={1} step={0.01} display={`${Math.round(weather.rainIntensity * 100)}%`} accent="#60a5fa" onChange={(v) => s.setWeather({ rainIntensity: v })} />
-                  <Slider label="Wind speed" value={weather.windSpeed} min={0} max={60} step={1} display={`${Math.round(weather.windSpeed)} km/h`} accent="#22d3ee" onChange={(v) => s.setWeather({ windSpeed: v })} />
-                  
-                  <div className="border-t border-white/5 pt-4">
-                    <MonthPicker />
-                  </div>
+                  <WeatherSourceSelector />
+
+                  {weatherSource === 'scenario' ? (
+                    <>
+                      <ScenarioOwnershipNotice />
+                      <WeatherScenarioControls />
+                    </>
+                  ) : weatherSource === 'forecast' ? (
+                    <ForecastControls />
+                  ) : (
+                    <>
+                      <Slider label="Temperature" value={weather.temperature} min={16} max={44} step={0.5} display={`${weather.temperature.toFixed(1)}°C`} accent="#f97316" onChange={(v) => s.setWeather({ temperature: v })} />
+                      <Slider label="Humidity" value={weather.humidity} min={20} max={100} step={1} display={`${Math.round(weather.humidity)}%`} accent="#38BDF8" onChange={(v) => s.setWeather({ humidity: v })} />
+                      <Slider label="Cloud cover" value={weather.cloudCoverage} min={0} max={1} step={0.01} display={`${Math.round(weather.cloudCoverage * 100)}%`} accent="#94a3b8" onChange={(v) => s.setWeather({ cloudCoverage: v })} />
+                      <Slider label="Rain" value={weather.rainIntensity} min={0} max={1} step={0.01} display={`${Math.round(weather.rainIntensity * 100)}%`} accent="#60a5fa" onChange={(v) => s.setWeather({ rainIntensity: v })} />
+                      <Slider label="Wind speed" value={weather.windSpeed} min={0} max={60} step={1} display={`${Math.round(weather.windSpeed)} km/h`} accent="#22d3ee" onChange={(v) => s.setWeather({ windSpeed: v })} />
+                    </>
+                  )}
+
+                  {/* The month belongs to the downloaded forecast in Forecast
+                      Mode, so it is not the operator's to set. Manual and
+                      Scenario Mode keep it exactly as before. */}
+                  {weatherSource !== 'forecast' && (
+                    <div className="border-t border-white/5 pt-4">
+                      <MonthPicker />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -418,7 +490,7 @@ export function ControlDeck() {
                     <>
                     <div className="rounded-[16px] border border-white/5 bg-white/[0.02] p-4">
                       <Slider
-                        label={`Manual Rotation`}
+                        label="Manual Blade Angle"
                         value={manualRotation}
                         min={0}
                         max={WEATHER_VALIDATION_MODE ? MANUAL_MAX : 180}
@@ -488,6 +560,31 @@ function openLabel(angle: number): string {
   if (o > 0.42) return 'Partial'
   if (o > 0.12) return 'Heavy'
   return 'Closed'
+}
+
+/**
+ * One read-only engineering value. Used by the Geometry and Adaptive Façade
+ * specification blocks — these are locked design facts, so they render as text
+ * rather than as controls.
+ */
+function Spec({
+  label,
+  value,
+  secondary,
+  className,
+}: {
+  label: string
+  value: string
+  secondary?: string
+  className?: string
+}) {
+  return (
+    <div className={className}>
+      <p className="text-[9px] uppercase tracking-widest text-white/40">{label}</p>
+      <p className="font-mono text-[10.5px] font-medium text-white/85">{value}</p>
+      {secondary && <p className="font-mono text-[10.5px] font-medium text-white/85">{secondary}</p>}
+    </div>
+  )
 }
 
 function MonthPicker() {

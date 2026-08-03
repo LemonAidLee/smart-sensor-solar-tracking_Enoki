@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils"
 const NAV_LINKS = [
   { name: "Home", href: "/" },
   { name: "Digital Twin", href: "/digital-twin" },
+  { name: "Engineering Lab", href: "/engineering" },
 ]
 
 // Precision spring for all navigation motions (simulating physical weight/inertia)

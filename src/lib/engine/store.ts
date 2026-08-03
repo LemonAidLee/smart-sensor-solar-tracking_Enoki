@@ -18,8 +18,13 @@ import type {
 } from './types'
 import { getSimulation } from './simulation'
 import { applyScenario, SCENARIOS } from './scenario'
+import type { WeatherSourceMode } from './weatherScenario'
+import { pickUpperCentrePanel } from '@/lib/embedded'
 import type { PanelState } from './panelStates'
 import type { FacadeControlMode } from './facadeControl'
+import { DEFAULT_WHATIF_SCENARIO } from '@/lib/prediction'
+import type { PredictionReport, WhatIfResult, WhatIfScenarioId } from '@/lib/prediction'
+import type { FaultDetectionReport } from '@/lib/ai/faultDetection'
 
 type WeatherInputs = Pick<
   WeatherState,
@@ -32,6 +37,10 @@ interface TwinState {
   building: BuildingConfig
   neighbors: NeighborBuilding[]
   weather: WeatherInputs
+  /** Where the weather comes from — Manual sliders or the Scenario timeline. */
+  weatherSource: WeatherSourceMode
+  /** Scenario currently loaded in the Weather Scenario Engine. */
+  weatherScenarioId: string
   speed: number
   playing: boolean
   month: number
@@ -41,12 +50,38 @@ interface TwinState {
   facadeControlMode: FacadeControlMode
   /** Sun-Tracking intent for the geometry engine. */
   trackingIntent: 'shade' | 'daylight'
-  /** Surface id inspected by the kinematics debug overlay/panel (null = auto). */
   debugSurfaceId: string | null
+  /** Mode for Solar Occlusion Debugging */
+  /** Selected module for solar debugging */
+  solarSelectedModuleId: string | null
   powerLoss: number
   cameraView: CameraView
   scenarioId: string | null
   snapshot: SimSnapshot
+  /**
+   * AI Prediction Layer report (Stage 8.1). Held beside the snapshot rather than
+   * inside it because prediction is a separate advisory subsystem, not simulation
+   * telemetry. The Prediction Engine returns the SAME object while nothing it
+   * depends on has changed, so this reference is stable across most polls and the
+   * AI Prediction panel does not re-render at the poll rate.
+   */
+  prediction: PredictionReport
+  /**
+   * AI What-If Analysis (Stage 8.2). Null until the operator runs a study, and
+   * it is NEVER refreshed by the poll — a study executes only on the Run
+   * Analysis action, so the simulation loop carries no sandbox cost.
+   */
+  whatIf: WhatIfResult | null
+  /** Which study the selector is on. Selecting one does not run it. */
+  whatIfScenarioId: WhatIfScenarioId
+  /** True when the twin has moved on since the cached study was run. */
+  whatIfStale: boolean
+  /**
+   * AI Fault Detection & Diagnosis report (Stage 8.5). Read-only monitor
+   * output, refreshed on every poll like `prediction` — cheap while nothing a
+   * rule reads has changed, since the engine returns the same cached object.
+   */
+  faultDetection: FaultDetectionReport
 
   setBuilding: (patch: Partial<BuildingConfig>) => void
   setOrientation: (deg: number) => void
@@ -54,6 +89,12 @@ interface TwinState {
   removeNeighbor: (id: string) => void
   updateNeighbor: (id: string, patch: Partial<NeighborBuilding>) => void
   setWeather: (patch: Partial<WeatherInputs>) => void
+  setWeatherSource: (mode: WeatherSourceMode) => void
+  setWeatherScenario: (id: string) => void
+  /** Manual "Refresh Forecast" — asynchronous, never blocks the simulation. */
+  refreshForecast: () => void
+  /** "Now" — return the clock to the site's current date and time. */
+  returnToNow: () => void
   setTime: (hours: number) => void
   setScrubbing: (b: boolean) => void
   setSpeed: (s: number) => void
@@ -64,6 +105,7 @@ interface TwinState {
   setFacadeControlMode: (mode: FacadeControlMode) => void
   setTrackingIntent: (intent: 'shade' | 'daylight') => void
   setDebugSurface: (id: string | null) => void
+  setSolarSelectedModule: (id: string | null) => void
   setSurfaceRotation: (surfaceId: string, angle: number) => void
   setSurfaceState: (surfaceId: string, state: PanelState) => void
   openAll: () => void
@@ -73,7 +115,47 @@ interface TwinState {
   setPowerLoss: (fraction: number) => void
   setCameraView: (v: CameraView) => void
   applyScenarioId: (id: string) => void
+  /** Point the selector at a study. Does NOT run it. */
+  selectWhatIf: (id: WhatIfScenarioId) => void
+  /** Run the selected study — the only path that executes a sandbox. */
+  runWhatIf: () => void
+  /** Discard the cached study. */
+  resetWhatIf: () => void
   pull: () => void
+}
+
+export function getActiveDemonstrationSurface(sim: ReturnType<typeof getSimulation>, debugSurfaceId: string | null) {
+  const surfaces = sim.skin.getAllSurfaces()
+  if (surfaces.length === 0) return undefined
+
+  if (debugSurfaceId) {
+    const s = sim.skin.getSurface(debugSurfaceId)
+    if (s) return s
+  }
+
+  const autoId = pickUpperCentrePanel(sim)?.surfaceId
+  if (autoId) {
+    const s = sim.skin.getSurface(autoId)
+    if (s) return s
+  }
+
+  return surfaces[0]
+}
+
+export function getActiveDemonstrationModule(
+  sim: ReturnType<typeof getSimulation>,
+  debugSurfaceId: string | null,
+  solarSelectedModuleId: string | null
+) {
+  const surface = getActiveDemonstrationSurface(sim, debugSurfaceId)
+  if (!surface || surface.panels.length === 0) return undefined
+
+  if (solarSelectedModuleId) {
+    const p = surface.panels.find(p => p.id === solarSelectedModuleId)
+    if (p) return p
+  }
+
+  return surface.panels[0]
 }
 
 let scrubbing = false
@@ -96,6 +178,8 @@ export const useTwinStore = create<TwinState>((set, get) => {
     building: { ...sim.building },
     neighbors: sim.neighbors.map((n) => ({ ...n })),
     weather: mirrorWeather(),
+    weatherSource: sim.weatherScenario.getMode(),
+    weatherScenarioId: sim.weatherScenario.getScenarioId(),
     speed: sim.clock.speed,
     playing: sim.clock.playing,
     month: sim.clock.date.getMonth(),
@@ -104,10 +188,16 @@ export const useTwinStore = create<TwinState>((set, get) => {
     facadeControlMode: sim.skin.getFacadeControlMode(),
     trackingIntent: sim.skin.getTrackingIntent() as 'shade' | 'daylight',
     debugSurfaceId: null,
+    solarSelectedModuleId: pickUpperCentrePanel(sim)?.id ?? null,
     powerLoss: 0,
     cameraView: 'perspective',
     scenarioId: 'kl-rect',
     snapshot: sim.snapshot(),
+    prediction: sim.getPrediction(),
+    whatIf: null,
+    whatIfScenarioId: DEFAULT_WHATIF_SCENARIO,
+    whatIfStale: false,
+    faultDetection: sim.getFaultDetection(sim.snapshot()),
 
     setBuilding: (patch) => {
       sim.setBuilding(patch)
@@ -136,8 +226,44 @@ export const useTwinStore = create<TwinState>((set, get) => {
     },
 
     setWeather: (patch) => {
+      // Manual edits are ignored while a scenario owns the weather — the UI hides
+      // the sliders, and the timeline would overwrite the value on the next tick.
+      if (get().weatherSource === 'scenario') return
       sim.setWeather(patch)
       set({ weather: { ...get().weather, ...patch }, scenarioId: null })
+    },
+    setWeatherSource: (mode) => {
+      sim.setWeatherSource(mode)
+      set({
+        weatherSource: sim.weatherScenario.getMode(),
+        weather: mirrorWeather(),
+        // Entering Forecast Mode moves the clock to the site's current date, so
+        // the mirrored month has to follow it.
+        month: sim.clock.date.getMonth(),
+      })
+    },
+    setWeatherScenario: (id) => {
+      sim.setWeatherScenario(id)
+      set({ weatherScenarioId: sim.weatherScenario.getScenarioId(), weather: mirrorWeather() })
+    },
+    returnToNow: () => {
+      sim.returnToSiteNow()
+      // Push a snapshot straight away so the Forecast Playback card lands on the
+      // new timestamp on click, rather than up to one poll interval later. The
+      // prediction and FDD report follow the same jump for the same reason.
+      const snap = sim.snapshot()
+      set({
+        snapshot: snap,
+        prediction: sim.getPrediction(),
+        faultDetection: sim.getFaultDetection(snap),
+        weather: mirrorWeather(),
+        month: sim.clock.date.getMonth(),
+      })
+    },
+    refreshForecast: () => {
+      // Fire-and-forget: the result lands in the cache and reaches the UI on the
+      // next snapshot poll. A failure is absorbed by the engine, not thrown here.
+      void sim.liveForecast.refresh()
     },
     setTime: (hours) => {
       sim.setTime(hours)
@@ -181,7 +307,17 @@ export const useTwinStore = create<TwinState>((set, get) => {
       sim.skin.setTrackingIntent(intent)
       set({ trackingIntent: intent, facadeControlMode: 'sun-tracking' })
     },
-    setDebugSurface: (id) => set({ debugSurfaceId: id }),
+    setDebugSurface: (id) => {
+      const surface = getActiveDemonstrationSurface(sim, id)
+      let currentModule = get().solarSelectedModuleId
+      // Ensure the selected module belongs to the new active surface
+      if (surface && !surface.panels.find(p => p.id === currentModule)) {
+        // Fallback to the first panel on this surface
+        currentModule = surface.panels[0]?.id ?? null
+      }
+      set({ debugSurfaceId: id, solarSelectedModuleId: currentModule })
+    },
+    setSolarSelectedModule: (id) => set({ solarSelectedModuleId: id }),
     setSurfaceRotation: (surfaceId, angle) => {
       sim.skin.setSurfaceRotation(surfaceId, angle)
     },
@@ -216,6 +352,8 @@ export const useTwinStore = create<TwinState>((set, get) => {
         building: { ...sim.building },
         neighbors: sim.neighbors.map((n) => ({ ...n })),
         weather: mirrorWeather(),
+        // `applyScenario` hands the weather back to Manual — mirror that here.
+        weatherSource: sim.weatherScenario.getMode(),
         month: sim.clock.date.getMonth(),
         skinMode: sim.skin.getMode(),
         manualRotation: sim.skin.getManualRotation(),
@@ -223,9 +361,39 @@ export const useTwinStore = create<TwinState>((set, get) => {
       })
     },
 
+    selectWhatIf: (id) => set({ whatIfScenarioId: id }),
+    runWhatIf: () => {
+      // The ONLY place a sandbox executes. Synchronous and self-contained: two
+      // 12-step projections over pure data, well under a frame.
+      const result = sim.runWhatIf(get().whatIfScenarioId)
+      set({ whatIf: result, whatIfStale: false })
+    },
+    resetWhatIf: () => {
+      sim.whatIf.reset()
+      set({ whatIf: null, whatIfStale: false })
+    },
+
     pull: () => {
       if (scrubbing) return
-      set({ snapshot: sim.snapshot() })
+      const snap = sim.snapshot()
+      // The prediction report is CACHED by its engine: this returns the identical
+      // object while nothing it depends on has changed, so the AI panel's
+      // selector sees no reference change and does not re-render.
+      const prediction = sim.getPrediction()
+      // Same caching guarantee as prediction — the FDD engine only re-runs its
+      // twelve subsystem checks when something a rule reads has actually moved.
+      const faultDetection = sim.getFaultDetection(snap)
+      // Staleness is only meaningful once a study exists, so the check is skipped
+      // entirely otherwise — no sandbox runs here either way, only a key compare.
+      const whatIfStale = get().whatIf !== null && sim.isWhatIfStale()
+      // While a scenario drives the weather, the mirrored inputs must follow the
+      // timeline too — they are what the collapsed readouts and (on returning to
+      // Manual) the sliders start from.
+      if (sim.weatherScenario.isActive()) {
+        set({ snapshot: snap, weather: mirrorWeather(), prediction, faultDetection, whatIfStale })
+      } else {
+        set({ snapshot: snap, prediction, faultDetection, whatIfStale })
+      }
     },
   }
 })

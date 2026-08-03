@@ -33,6 +33,8 @@ export function SimulationCursor() {
     let magX: number | null = null
     let magY: number | null = null
     let magStrength = 0
+    let currentBtn: Element | null = null
+    let currentEventState = 'default'
 
     const lerp = (a: number, b: number, n: number) => (1 - n) * a + n * b
 
@@ -41,56 +43,21 @@ export function SimulationCursor() {
       targetY = e.clientY
 
       const target = e.target as HTMLElement
-      
       const btn = target.closest('button, a, .cursor-pointer')
       const input = target.closest('input[type="range"], .wx-range')
       const isTimeline = target.closest('.timeline-scrubber')
       const isCamera = e.buttons > 0
       
-      let newState = 'default'
-      magX = null
-      magY = null
-      magStrength = 0
+      currentBtn = btn
 
       if (isTimeline) {
-        newState = 'dragging-timeline'
+        currentEventState = 'dragging-timeline'
       } else if (input) {
-        newState = 'slider-hover'
-      } else if (btn) {
-        const rect = btn.getBoundingClientRect()
-        const cx = rect.left + rect.width / 2
-        const cy = rect.top + rect.height / 2
-        const dist = Math.hypot(targetX - cx, targetY - cy)
-        
-        // Only trigger full hover when the pointer is genuinely over the visual core.
-        // Assume visual icons are around 20-32px (10-16px radius).
-        const coreRadius = Math.min(rect.width / 2, rect.height / 2, 16)
-        
-        if (dist <= coreRadius) {
-          newState = 'button-hover'
-          magX = cx
-          magY = cy
-          magStrength = 0.04 // extremely subtle precise snap
-        } else {
-          newState = 'proximity'
-          magX = cx
-          magY = cy
-          magStrength = 0.01 // negligible, almost pure 1:1
-        }
+        currentEventState = 'slider-hover'
       } else if (isCamera && !target.closest('.dt-ui-layer')) {
-        newState = 'camera-orbit'
-      }
-
-      const canvasState = document.body.getAttribute('data-canvas-cursor')
-      if (canvasState && newState === 'default') {
-        newState = canvasState
-      }
-
-      if (newState !== state) {
-        state = newState
-        outerRef.current?.setAttribute('data-state', state)
-        innerRef.current?.setAttribute('data-state', state)
-        haloRef.current?.setAttribute('data-state', state)
+        currentEventState = 'camera-orbit'
+      } else {
+        currentEventState = 'default'
       }
     }
 
@@ -123,6 +90,44 @@ export function SimulationCursor() {
     const render = () => {
       let finalX = targetX
       let finalY = targetY
+      
+      let newState = currentEventState
+      magX = null
+      magY = null
+      magStrength = 0
+
+      if (currentBtn) {
+        const rect = currentBtn.getBoundingClientRect()
+        const cx = rect.left + rect.width / 2
+        const cy = rect.top + rect.height / 2
+        const dist = Math.hypot(targetX - cx, targetY - cy)
+        
+        const coreRadius = Math.min(rect.width / 2, rect.height / 2, 16)
+        
+        if (dist <= coreRadius) {
+          newState = 'button-hover'
+          magX = cx
+          magY = cy
+          magStrength = 0.04
+        } else {
+          newState = 'proximity'
+          magX = cx
+          magY = cy
+          magStrength = 0.01
+        }
+      }
+
+      const canvasState = document.body.getAttribute('data-canvas-cursor')
+      if (canvasState && newState === 'default') {
+        newState = canvasState
+      }
+
+      if (newState !== state) {
+        state = newState
+        outerRef.current?.setAttribute('data-state', state)
+        innerRef.current?.setAttribute('data-state', state)
+        haloRef.current?.setAttribute('data-state', state)
+      }
 
       if (magX !== null && magY !== null) {
         finalX = lerp(targetX, magX, magStrength)

@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { ScenarioBar } from '@/components/twin3d/ui/ScenarioBar'
 import { ControlDeck } from '@/components/twin3d/ui/ControlDeck'
 import { ToolDock } from '@/components/twin3d/ui/ToolDock'
+import { AiDock } from '@/components/twin3d/ui/AiDock'
 import { WorkspaceWindows } from '@/components/twin3d/ui/WorkspaceWindows'
 import { VirtualEmbeddedPanel } from '@/components/embedded/VirtualEmbeddedPanel'
 import { VECPanel } from '@/components/twin3d/ui/VECPanel'
@@ -46,6 +47,10 @@ export function BuildingLayer() {
               toggles its engineering tool as an independent floating window, so
               no panel is permanently expanded and the building stays the hero. */}
           <ToolDock />
+          
+          {/* AI Dock — dedicated sidebar for AI tools (Prediction, What-If),
+              positioned slightly offset from the Engineering Tool Dock. */}
+          <AiDock />
 
           {/* Floating engineering windows (Weather · Solar Geometry · Panel
               Kinematics · PBIF) — draggable, resizable, collapsible, persistent;
@@ -55,7 +60,11 @@ export function BuildingLayer() {
           {/* Virtual Embedded Controller — a subtle activation badge that expands
               on hover and opens the full controller on tap (Weather Validation
               Mode). Never permanently occupies screen space. */}
-          {WEATHER_VALIDATION_MODE && <VirtualEmbeddedPanel />}
+          {WEATHER_VALIDATION_MODE && (
+            <>
+              <VirtualEmbeddedPanel />
+            </>
+          )}
 
           {/* Full-twin embedded dashboard (non-validation mode only). */}
           {!WEATHER_VALIDATION_MODE && (

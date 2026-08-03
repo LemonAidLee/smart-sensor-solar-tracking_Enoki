@@ -177,7 +177,7 @@ export function WeatherPanelBody() {
             onClick={() => setShowIrradiance(true)}
           />
           <Metric label="Surfaces" value={`${m.surfaceCount}`} accent="#38BDF8" />
-          <Metric label="Avg blade angle" value={`${m.averagePanelAngle}`} unit="°" accent="#a78bfa" />
+          <Metric label="Avg Blade Angle" value={`${m.averagePanelAngle}`} unit="°" accent="#a78bfa" />
           <Metric label="Openness" value={`${Math.round(m.averageOpenness * 100)}`} unit="%" accent="#22d3ee" />
           <Metric label="Cooling load" value={`${m.totalCoolingLoad}`} unit="kW" accent="#f43f5e" />
           <Metric label="Daylight" value={`${m.averageDaylight}`} unit="%" accent="#38BDF8" />

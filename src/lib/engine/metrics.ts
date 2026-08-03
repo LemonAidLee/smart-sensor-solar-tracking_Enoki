@@ -6,7 +6,63 @@
 import type { BuildingMetrics, BuildingSurface, SunState, SurfaceMetrics, WeatherState } from './types'
 import { clamp } from './math'
 
-const SHGC = 0.45 // solar heat-gain coefficient of the glazing behind the skin
+/** Solar heat-gain coefficient of the glazing behind the skin. */
+export const GLAZING_SHGC = 0.45
+
+/** Outdoor temperature above which the envelope starts adding cooling load, °C. */
+export const ENVELOPE_BALANCE_POINT_C = 24
+
+/** Envelope conductance used by the first-order fabric gain, kW per m² per K. */
+export const ENVELOPE_CONDUCTANCE_KW_PER_M2K = 0.012
+
+/**
+ * Reference irradiance the 0–1 "solar exposure" scale is normalised against,
+ * W/m². Full sun on a plane reads 1.
+ */
+export const EXPOSURE_REFERENCE_WM2 = 1000
+
+/**
+ * Normalised solar exposure, 0–1, from an effective plane irradiance.
+ *
+ * This is what `FacadePanel.solarExposure` holds, and therefore what every
+ * façade metric below is defined against. It is emphatically NOT the geometric
+ * cosine projection: it carries the cloud attenuation with it, so a metric fed
+ * a bare cosine would be blind to the weather.
+ */
+export function normalisedExposure(irradianceWm2: number): number {
+  return clamp(irradianceWm2 / EXPOSURE_REFERENCE_WM2)
+}
+
+/**
+ * Solar heat arriving at the glazing through the adaptive skin, kW (thermal).
+ *
+ * The blades are the control: a fully closed façade (openness 0) admits nothing,
+ * a fully open one (openness 1) admits the incident beam times the glazing's
+ * SHGC. This is the ONE place the façade's thermal effect is defined — the live
+ * metrics and the AI's What-If sandbox both call it, so a hypothetical locked
+ * façade is evaluated with the same physics the twin already reports.
+ */
+export function facadeSolarGainKW(avgExposure: number, avgOpenness: number, areaM2: number): number {
+  return avgExposure * avgOpenness * areaM2 * GLAZING_SHGC
+}
+
+/** Fabric gain driven by the outdoor/indoor temperature difference, kW (thermal). */
+export function facadeEnvelopeGainKW(ambientC: number, areaM2: number): number {
+  return Math.max(0, ambientC - ENVELOPE_BALANCE_POINT_C) * areaM2 * ENVELOPE_CONDUCTANCE_KW_PER_M2K
+}
+
+/**
+ * Daylight reaching the interior, percent. Openness is the control; the sun's
+ * strength scales what that openness is worth.
+ */
+export function facadeDaylightPercent(
+  avgOpenness: number,
+  isDaytime: boolean,
+  irradianceWm2: number,
+): number {
+  const sunI = clamp(irradianceWm2 / 1000)
+  return Math.round(clamp(avgOpenness * (isDaytime ? 0.35 + 0.65 * sunI : 0.04)) * 100)
+}
 
 export function computeSurfaceMetrics(
   surface: BuildingSurface,
@@ -38,14 +94,13 @@ export function computeSurfaceMetrics(
   const avgExposure = exposure / n
   const avgOpen = open / n
   const avgShade = shade / n
-  const sunI = sun ? clamp(sun.irradiance / 1000) : 0
   const ambient = weather?.temperature ?? 30
 
-  const solarGainKW = avgExposure * avgOpen * area * SHGC
-  const envelopeKW = Math.max(0, ambient - 24) * area * 0.012
+  const solarGainKW = facadeSolarGainKW(avgExposure, avgOpen, area)
+  const envelopeKW = facadeEnvelopeGainKW(ambient, area)
   const coolingLoad = Math.round((solarGainKW + envelopeKW) * 10) / 10
 
-  const averageDaylight = Math.round(clamp(avgOpen * (sun?.isDaytime ? 0.35 + 0.65 * sunI : 0.04)) * 100)
+  const averageDaylight = facadeDaylightPercent(avgOpen, sun?.isDaytime ?? false, sun?.irradiance ?? 0)
   const energySaving = Math.round(clamp((1 - avgOpen) * (0.3 + avgExposure)) * 100)
 
   const indoorProxy = ambient + avgExposure * avgOpen * 8

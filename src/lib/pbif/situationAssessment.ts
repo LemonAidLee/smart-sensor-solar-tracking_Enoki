@@ -17,14 +17,14 @@ import { RAIN_LEVEL, WIND_KMH } from './thresholds'
 export type WindState = 'LOW' | 'MODERATE' | 'HIGH' | 'EXTREME'
 export type RainState = 'NONE' | 'LIGHT' | 'MODERATE' | 'HEAVY'
 
-/** The only three weather variables PBIF v1 is permitted to read. */
-export interface WeatherInputs {
+/** The raw inputs that PBIF v1 evaluates (now decoupled from environmental physics). */
+export interface SensorInputs {
   /** Wind speed, km/h. */
   windSpeed: number
   /** Rain intensity, 0–1 normalised. */
   rainIntensity: number
-  /** Cloud cover, 0–1 normalised. */
-  cloudCoverage: number
+  /** Simulated embedded LDR ADC reading (0-4095). */
+  solarADC: number
   /** Outdoor temperature, °C */
   outdoorTemperature: number
 }
@@ -80,8 +80,8 @@ export function assessRain(rainIntensity: number): AssessedVariable<RainState> {
   return { state, value: rainIntensity, display: pct(rainIntensity) }
 }
 
-/** Translate the raw weather inputs into engineering states. */
-export function assessSituation(w: WeatherInputs): SituationAssessment {
+/** Translate the raw inputs into engineering states. */
+export function assessSituation(w: SensorInputs): SituationAssessment {
   return {
     wind: assessWind(w.windSpeed),
     rain: assessRain(w.rainIntensity),

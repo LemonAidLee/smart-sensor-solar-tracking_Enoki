@@ -9,6 +9,7 @@ import { getCityLayout } from '@/lib/engine/cityLayout'
 import { getCityWindowMaterial, updateCityWindows } from '@/lib/engine/cityWindowMaterial'
 import { useTwinStore } from '@/lib/engine/store'
 import { prefersReducedMotion } from '@/lib/engine/reducedMotion'
+import { rateHz } from '@/lib/engine/scheduler'
 
 /**
  * CityLife — the surrounding urban district: an architectural concept city that
@@ -40,7 +41,7 @@ function nightFactor(altitude: number): number {
  */
 let _asphalt: THREE.MeshStandardMaterial | null = null
 function asphaltMaterial(): THREE.MeshStandardMaterial {
-  if (!_asphalt) _asphalt = new THREE.MeshStandardMaterial({ color: '#1b1e24', roughness: 0.9, metalness: 0.1 })
+  if (!_asphalt) _asphalt = new THREE.MeshStandardMaterial({ color: '#111214', roughness: 0.9, metalness: 0.1 })
   return _asphalt
 }
 
@@ -66,7 +67,9 @@ export function CityLife() {
    A single headless frame loop advancing the shared city window shader. */
 function CityDriver() {
   const sim = getSimulation()
-  useFrame((state) => {
+  const limiter = useMemo(() => rateHz(20), [])
+  useFrame((state, dt) => {
+    if (limiter.tick(dt) === 0) return
     const night = nightFactor(sim.sun.altitude)
     updateCityWindows(state.clock.elapsedTime, night, sim.weather.groundWetness)
   })
@@ -82,7 +85,7 @@ function DistrictBuildings() {
   const winMat = useMemo(() => getCityWindowMaterial(), [])
   // Plain, dark material for mechanical equipment / masts (no windows).
   const equipMat = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: '#20252c', metalness: 0.5, roughness: 0.6 }),
+    () => new THREE.MeshStandardMaterial({ color: '#4f555c', metalness: 0.2, roughness: 0.8 }),
     [],
   )
 
@@ -132,7 +135,7 @@ function Roads({ roads }: { roads: ReturnType<typeof getCityLayout>['roads'] }) 
   })
 
   const markingMat = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: '#c9cdd4', roughness: 0.7, emissive: '#20242c', emissiveIntensity: 0.4 }),
+    () => new THREE.MeshStandardMaterial({ color: '#787c82', roughness: 0.8, emissive: '#16181b', emissiveIntensity: 0.2 }),
     [],
   )
 
@@ -267,9 +270,11 @@ function Trees() {
   // Under reduced-motion the sway is frozen; the matrices are written once and
   // then left untouched (no per-frame instance-buffer uploads).
   const settled = useRef(false)
-  useFrame((state) => {
+  const limiter = useMemo(() => rateHz(20), [])
+  useFrame((state, dt) => {
     const reduced = prefersReducedMotion()
     if (reduced && settled.current) return
+    if (!reduced && limiter.tick(dt) === 0) return
     const wind = reduced ? 0 : clamp(sim.weather.windStrength)
     const t = reduced ? 0 : state.clock.elapsedTime
     applied(trunkRound.current, canopyRound.current, round, t, wind)
@@ -280,16 +285,16 @@ function Trees() {
   return (
     <group>
       <instancedMesh ref={trunkRound} args={[trunkGeo, undefined as unknown as THREE.Material, Math.max(1, round.length)]}>
-        <meshStandardMaterial color="#3b352f" roughness={0.9} />
+        <meshStandardMaterial color="#2a2723" roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={canopyRound} args={[sphereGeo, undefined as unknown as THREE.Material, Math.max(1, round.length)]}>
-        <meshStandardMaterial color="#4a5d4e" roughness={0.9} />
+        <meshStandardMaterial color="#344037" roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={trunkCone} args={[trunkGeo, undefined as unknown as THREE.Material, Math.max(1, cones.length)]}>
-        <meshStandardMaterial color="#3b352f" roughness={0.9} />
+        <meshStandardMaterial color="#2a2723" roughness={0.9} />
       </instancedMesh>
       <instancedMesh ref={canopyCone} args={[coneGeo, undefined as unknown as THREE.Material, Math.max(1, cones.length)]}>
-        <meshStandardMaterial color="#425840" roughness={0.9} />
+        <meshStandardMaterial color="#2c362e" roughness={0.9} />
       </instancedMesh>
     </group>
   )
@@ -355,7 +360,7 @@ function Vehicles() {
   return (
     <group>
       <instancedMesh ref={body} args={[bodyGeo, undefined as unknown as THREE.Material, vehicles.length]}>
-        <meshStandardMaterial color="#2b3038" metalness={0.5} roughness={0.5} />
+        <meshStandardMaterial color="#3f454d" metalness={0.5} roughness={0.5} />
       </instancedMesh>
       <instancedMesh ref={head} args={[headGeo, undefined as unknown as THREE.Material, vehicles.length]}>
         <meshStandardMaterial ref={headMat} color="#fff6e0" emissive="#fff2d0" emissiveIntensity={1} toneMapped={false} />
@@ -411,10 +416,10 @@ function Lamps() {
   return (
     <group>
       <instancedMesh ref={pole} args={[poleGeo, undefined as unknown as THREE.Material, lamps.length]}>
-        <meshStandardMaterial color="#2a2f37" metalness={0.6} roughness={0.5} />
+        <meshStandardMaterial color="#454a50" metalness={0.4} roughness={0.7} />
       </instancedMesh>
       <instancedMesh ref={arm} args={[armGeo, undefined as unknown as THREE.Material, lamps.length]}>
-        <meshStandardMaterial color="#2a2f37" metalness={0.6} roughness={0.5} />
+        <meshStandardMaterial color="#454a50" metalness={0.4} roughness={0.7} />
       </instancedMesh>
       <instancedMesh ref={headHolder} args={[headGeo, undefined as unknown as THREE.Material, lamps.length]}>
         <meshStandardMaterial ref={headMat} color="#fff4dc" emissive="#ffe8bd" emissiveIntensity={0} toneMapped={false} />

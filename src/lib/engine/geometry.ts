@@ -7,18 +7,15 @@
  */
 
 import type { BuildingConfig, BuildingShape, BuildingSurface, FacadePanel, PanelHealth } from './types'
-import { normalize, type Vec3, deg2rad } from './math'
+import { normalize, type Vec3 } from './math'
 import { ANGLE_FULLY_OPEN, opennessFromAngle, PanelState, ROTATION_MAX, ROTATION_MIN, shadingFromAngle } from './panelStates'
 import { WEATHER_VALIDATION_MODE } from './validationMode'
+import { facadeRowCount, floorForRow, moduleColumnsForEdge } from './facadeModule'
 
 export interface Vec2 {
   x: number
   z: number
 }
-
-const CELL = 4.2 // target panel size in metres
-const MAX_COLS = 26
-const MAX_ROWS = 34
 
 /** Deterministic hash → [0,1) so layouts + faults are stable between reloads. */
 function hash(n: number): number {
@@ -114,8 +111,13 @@ export function generateSurfaces(cfg: BuildingConfig): BuildingSurface[] {
     const centerXZ = { x: mid.x + nx * standoff, y: 0, z: mid.z + nz * standoff }
     const center: Vec3 = { x: centerXZ.x, y: cfg.height / 2, z: centerXZ.z }
 
-    const cols = Math.max(1, Math.min(MAX_COLS, Math.round(len / CELL)))
-    const rows = Math.max(1, Math.min(MAX_ROWS, Math.round(cfg.height / CELL)))
+    // Curtain-wall setting-out: this elevation's own bay count from the nominal
+    // adaptive module, and the storey-aligned row count. `cellW`/`cellH` are the
+    // ACTUAL module dimensions — the nominal size adjusted so the bays close
+    // exactly on this elevation (see facadeModule.ts). Rows are shared by every
+    // elevation so transoms line through around the whole building.
+    const cols = moduleColumnsForEdge(len)
+    const rows = facadeRowCount(cfg)
     const cellW = len / cols
     const cellH = cfg.height / rows
     const id = `S${(i + 1).toString().padStart(2, '0')}`
@@ -139,6 +141,7 @@ export function generateSurfaces(cfg: BuildingConfig): BuildingSurface[] {
           surfaceId: id,
           row: r,
           column: c,
+          floor: floorForRow(r, cfg),
           worldPosition,
           normal,
           width: cellW,

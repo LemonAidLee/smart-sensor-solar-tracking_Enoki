@@ -1,7 +1,7 @@
 'use client'
 
 import { FloatingWindow } from './FloatingWindow'
-import { WORKSPACE_TOOLS, resolveDefaultX } from './workspaceTools'
+import { WORKSPACE_TOOLS, AI_TOOLS, resolveDefaultX } from './workspaceTools'
 
 /**
  * WorkspaceWindows — mounts every engineering tool as an independent
@@ -22,7 +22,22 @@ export function WorkspaceWindows() {
           title={tool.label}
           icon={tool.icon}
           accent={tool.accent}
-          defaultX={resolveDefaultX(i, tool.defaultW)}
+          defaultX={resolveDefaultX(i, tool.defaultW, false)}
+          defaultY={tool.defaultY}
+          defaultW={tool.defaultW}
+        >
+          <tool.Body />
+        </FloatingWindow>
+      ))}
+
+      {AI_TOOLS.map((tool, i) => (
+        <FloatingWindow
+          key={tool.id}
+          id={tool.id}
+          title={tool.label}
+          icon={tool.icon}
+          accent={tool.accent}
+          defaultX={resolveDefaultX(i, tool.defaultW, true)}
           defaultY={tool.defaultY}
           defaultW={tool.defaultW}
         >

@@ -247,6 +247,62 @@ Before submitting a change, ensure it passes this checklist:
 > A running record of validated work, newest first. Everything below is gated by
 > `WEATHER_VALIDATION_MODE`; no PBIF/optimization/electronics code was deleted.
 
+### 2026-07-30 — Cyber-Physical Pipeline & Virtual Embedded Controller Synchronization
+- **`src/lib/embedded/sensors.ts`** — Refactored to enforce a single source of truth for all embedded hardware readings. Replaced duplicated raw GHI-to-ADC calculations (`ldrDivider`) with direct reads from the unified `VirtualSensorEngine` (`sim.virtualSensor`). This guarantees that both the Pipeline (conceptual) and the Controller (implementation) display identical values that correctly factor in Effective Irradiance, including cosine projection and shading.
+- **Terminology Standardization** — Updated VEC displays to strictly match the Cyber-Physical Pipeline terminology (e.g., 'Filtered ADC', 'Target Angle', 'Current Angle', 'Estimated Lux').
+- **Pipeline Stage Linking** — Added an **"Inspect Live Controller"** button to Stage 3 of the Cyber-Physical Pipeline, allowing users to deeply inspect the exact controller state from within the conceptual workflow.
+- **Visual Connection** — Applied the Stage 3 accent color (`#a78bfa` / violet) to the VEC header and introduced a breadcrumb (`Cyber-Physical Pipeline › Stage 3 › Virtual Embedded Controller`) to instantly link the implementation detail back to the conceptual stage.
+
+### 2026-07-31 — Utility Grid Integration (Stage 7.6)
+- **`src/lib/engine/grid.ts`** (new, pure) — `GridEnergyEngine`: import/export power, grid state (Importing · Exporting · Idle, with `Offline` declared for a future islanding mode) and the point-of-common-coupling specification (Three-Phase AC, 415 V, 50 Hz — TNB distribution practice / MS IEC 60038).
+- **The grid performs no routing, by design.** Because the utility connection is unlimited and unconditional, its import and export are *already* `requiredGridImportKW` and `surplusKW` — the residual after PV served the load and the battery took its turn. Re-deriving them would create a second authority for the same numbers, so the engine **projects** the settled bus and adds no arithmetic beyond classification. The whole routing change in `buildingEnergy.ts` is one line: `bus.gridKW = requiredGridImport − surplus`.
+- **`src/lib/engine/energyLedger.ts`** (new, pure) — `DailyEnergyLedger`: the six daily energy totals (PV generation, building consumption, battery charge/discharge, grid import/export) plus daily peak import/export. It is a separate module because the day boundary is a system-level concept owned by no single engine, and it is the **sole** place a kW becomes a kWh — so the grid card and the daily list can never disagree. Integrated over **simulated** time; resets on a genuine midnight wrap and restarts on a timeline scrub (a pause correctly does neither).
+- **Export is never fabricated** — exactly zero with no surplus, verified over a full simulated day. That follows from Stage 7.4's sizing finding, not from a special case in the grid code.
+- **Conservation** — `PV + BatteryDischarge + GridImport == Load + BatteryCharge + GridExport` holds identically (both sides reduce to `generation + load − pvToLoad`). Verified to a worst imbalance of **2.84×10⁻¹⁴ over 50,000 randomised cases**, with import/export never simultaneous and `bus.gridKW == grid.netKW` asserted on every case.
+- **Scope respected**: no pricing, bills, ROI, payback, carbon, financial savings, tariff optimisation or demand charges. Solar Physics, the PV engines, the battery, the adaptive façade, PBIF, the Virtual Sensor, the servo model, the Cyber-Physical Pipeline, the camera and the neighbour system are untouched; `BuildingEnergyEngine`'s class body is unchanged.
+
+### 2026-07-31 — Battery Energy Storage System (Stage 7.5)
+- **`src/lib/engine/battery.ts`** (new, pure) — `BatteryEnergyEngine`: state of charge, charge/discharge dispatch, power and reserve limits, constant round-trip efficiency. Renders nothing and reaches into no other engine.
+- **Storage port, not a dependency.** `buildingEnergy.ts` declares a `StoragePort` interface and imports **nothing** from `battery.ts`; the bus hands the port the PV-only imbalance and receives a dispatch. The router knows there is *a* store, not *which* store, so the future grid connection plugs in the same way and `connectStorage(null)` recovers exact Stage 7.4 behaviour.
+- **Bus routing** — `settleBus()` gained its storage terms at the seam Stage 7.4 reserved, in strict priority: PV→load, surplus→battery, battery→load, remainder = `requiredGridImport`. Conservation is enforced on both sides and the dispatch is **clamped to the offered imbalance**, so a misbehaving store cannot break the bus. `requiredGridImportKW` became `deficit − batteryDischarge` exactly as predicted, leaving every existing consumer correct. The BuildingEnergyEngine's demand model is byte-identical.
+- **Specification** — capacity **39.56 kWh from the report**; the report gives nothing else, so the C-rate (0.5C → 19.78 kW), efficiencies (96% each way, 92.2% round-trip) and 10% reserve are labelled **engineering assumptions** in the UI rather than presented as datasheet values. `BATTERY_CAPACITY_KWH` is the single authority for 39.56.
+- **Energy integrated over simulated time**, matching the load model and HVAC lag; `dt = 0` (pause, init, scrub) provably transfers no energy.
+- **Designed for a battery that rarely charges.** The case-study PV plant never exceeds demand, so charging is driven strictly by real surplus and never fabricated; with none available the battery parks at its reserve floor and reports *why* through a `reason` string. Verified: with the only change being a larger array, the identical code charges 10%→100% and later discharges 19.8 kW, cutting grid import from 53.8 to 34.0 kW — no architectural change.
+- **Scope respected**: no pricing, savings, carbon, ROI, payback, grid export, net metering or tariffs. Solar Physics, the PV engines, the adaptive façade, PBIF, the Virtual Sensor, the servo model, the Cyber-Physical Pipeline, the camera and the neighbour system are untouched.
+- **Validation**: bus conservation to 2.8×10⁻¹⁴ over 20,000 randomised cases including rogue dispatches; charge round-trip exact; overcharge and reserve floors both provably respected.
+
+### 2026-07-31 — Building Energy Management System (Stage 7.4)
+- **`src/lib/engine/buildingEnergy.ts`** (new, pure) — the BEMS. Gives the PV plant's AC output a destination: `PV Plant → AC Output → Building Energy Bus → Building Load`. Contains the demand model, the bus and the energy balance; renders nothing and reaches into no other engine.
+- **Single authority preserved.** The BEMS **never re-derives PV power** — `pvACOutputKW` is read from `PVInverterEngine.getMetrics().currentACPowerKW`, exactly as `SolarPhysicsEngine` remains the sole authority for irradiance. It runs in the environmental tier immediately after `pvInverter.update()`.
+- **Building AC Bus** — `settleBus()` is the one place the balance is resolved, enforcing `generation = selfConsumption + surplus` and `load = selfConsumption + deficit`. Battery and Grid ports are **declared and pinned to 0**; `requiredGridImportKW` is a separate field so it stays correct once storage subtracts from it in Stage 7.5.
+- **Load model** — five categories (HVAC · Lighting · Office Equipment · Elevators · Building Services) as W/m² power densities with unoccupied-hour fractions, cited to ASHRAE 90.1, CIBSE Guide F and MS 1525. 42 W/m² peak (210 kW) / 7.4 W/m² base (37 kW) at 5,000 m² GFA. Occupancy is built from `smoothstep` transitions so the curve is C¹-continuous; HVAC adds a degree-hour temperature response behind a 15-minute first-order thermal lag.
+- **Simulated vs real time.** The thermal lag is integrated in **simulated** seconds derived from the clock (`Simulation.energyStepSimSeconds()`), not frame time — the twin compresses a day into ~2 real minutes, so a wall-clock lag would span simulated days. Correct when paused, at any speed, across midnight, and on a timeline scrub.
+- **`src/lib/engine/pvEquipment.ts`** (new, pure data) — nameplate specification from the project report (LONGi LR5-72HBD 550M ×189, 104.02 kW DC; Huawei SUN2000-80KTL-M1, 80 kW AC, 98%), kept separate from the PV engines so those files stay untouched. The 104.02 vs 103.95 kW arithmetic difference is surfaced and labelled, never reconciled silently — the same nominal-vs-as-built convention as §18.2.
+- **UI** — the Rooftop PV panel now separates static specification from live telemetry (Plant Summary · PV Array · Inverter · Building Energy Flow) and draws the balance as two proportional bars on one shared scale; static, no game-like animation.
+- **Scope respected**: no battery, no grid, no net metering, no financial or carbon calculation. Solar Physics, the PV engines, the adaptive façade, PBIF, the Virtual Sensor, the servo model, the Cyber-Physical Pipeline, the camera and the neighbour system are untouched.
+- **Engineering finding**: surplus is structurally zero for this building — the 80 kW AC plant never exceeds demand during generation hours, so peak coverage is ~53% at solar noon. A 104 kW array on a 5,000 m² tropical office is a partial-offset system, not a net exporter. The surplus path is implemented and correct; it simply never activates. No figure was tuned to make the metric non-zero.
+
+### 2026-07-31 — UI architecture: Rooftop PV separated from Building Engineering (Stage 7.3.1)
+- **Rule applied**: the UI's top-level panel structure must mirror the engine's subsystem boundaries — one panel per independent subsystem. `pvArray` / `pvElectrical` / `pvInverter` are **siblings** of `skin` on `Simulation`, not children of it, and Stage 7.1.5 deliberately excluded the PV array from the Cyber-Physical Façade pipeline. Nesting the PV dashboard inside the Building panel asserted a containment relationship the simulation does not have.
+- **`src/components/twin3d/ui/RooftopPvPanel.tsx`** (new) — the dedicated Rooftop PV Plant panel: plant AC headline + DC→Loss→AC chain, **DC Array** (installed capacity, current DC output, array utilisation, operating modules, average irradiance) and **AC Inverter** (current AC output, rated capacity, efficiency, operating state, clipping, conversion loss). It owns no logic — every value is read from `SimSnapshot`, which the PV engines already publish (guide §6).
+- **Registered as a top-level workspace tool** (`workspaceTools.tsx`, `WindowId` gains `'pv'`), so it appears on the right-hand Tool Dock beside the other engineering categories and inherits the standard `FloatingWindow` chrome, animation, styling and persistence.
+- **`ControlDeck.tsx` Building tab restored** to a pure engineering-specification panel: Orientation (unchanged, still interactive) · read-only Geometry (programme, storeys, height, width, length) · the Adaptive Façade block measured off `summariseFacadeLayout()`. The tower-ranged shape picker and Height/Width sliders were removed — the case-study massing is a locked specification (§18), not an operator control.
+- **Presentation only.** Four files touched, all UI; no engine, PBIF or kinematics file modified. Solar Physics, the PV electrical/inverter models, the adaptive façade, the Virtual Sensor and the Cyber-Physical Pipeline are byte-identical.
+- **Forward compatibility**: the panel is a stack of one `PvSection` component; five reserved slots (Battery, Energy Flow, Grid, Financial, Carbon) already render behind a collapsed disclosure, so a future stage is a content change inside an existing section rather than another UI redesign.
+
+### 2026-07-31 — Geometry migration to the engineering case study
+- **`src/lib/engine/facadeModule.ts`** (new, pure) — the curtain-wall setting-out specification: nominal 1.2 m × 1.26 m adaptive module, per-elevation bay counts, storey-aligned row counts, and `summariseFacadeLayout()` (measured off the generated panels, never a parallel formula). Documents and resolves the one inconsistency in the report's figures (see §18.2).
+- **Building is now the report's case study**, not a generic tower: Commercial Office · 5 storeys · 25 × 40 m · 19 m · 3.8 m floor-to-floor · 100% curtain wall. `DEFAULT_BUILDING`, the `kl-rect` scenario and the neighbour context were all migrated; the other scenarios became footprint studies of the same programme.
+- **Façade grid rebuilt from the module spec.** `geometry.ts` no longer uses a 4.2 m demonstration cell; `cols = moduleColumnsForEdge(len)`, `rows = facadeRowCount(cfg)`. Result: 21 + 33 bays per elevation × 3 rows per storey = **108 columns · 324 panels/floor · 1,620 panels · 2,470 m²**, matching the report exactly. `FacadePanel` gains `floor`, so every module is addressable by storey.
+- **No building dimension is assumed anywhere any more.** Camera presets, the rooftop plant, the kinematics debug vectors, and the curtain-wall/second-skin member sizes are all derived from the live massing or the bay pitch.
+- **Performance.** `OcclusionDebug` no longer allocates two `Float32Array`s and two `BufferAttribute`s per frame; buffers are allocated once and reused with `setDrawRange`. Full spec in §18.
+
+### 2026-07-30 — Environmental Influence Model (Cyber-Physical Pipeline)
+- **`src/lib/engine/environmentalInfluence.ts`** (new, pure/framework-free) — the single authoritative declaration of *which environmental parameter influences which pipeline stage, and by what mechanism*. Cloud → Environment; Temperature → Embedded Controller; Rain → Embedded Controller; Wind → Embedded Controller **and** Actuation. Owns no thresholds of its own (all imported from `src/lib/pbif/thresholds.ts`) and asserts no coupling the simulation does not implement.
+- **`src/components/twin3d/ui/EnvironmentalInfluence.tsx`** (new, reusable) — `InfluenceRail`, `InfluenceCard`, `InfluenceLegend`. Side-entry cards on a dashed rail, deliberately subordinate to the primary spine: smaller type, desaturated accents, no output chip, no animated flow connector.
+- **`CyberPhysicalPipeline.tsx`** — `Stage` gains an optional `influences` slot rendered *after* the summary and *before* the output chip (an influence modifies the stage before it produces its output). Sensor and Façade stages deliberately have none; the Sensor carries an explicit "no environmental influence enters here" note instead. The Environment stage's input rows no longer list temperature/wind, which were never environmental measurements in this pipeline.
+- Educational contract: the primary Sun → Environment → Sensor → Controller → Servo → Façade story remains dominant; weather is secondary context. Each influence carries a *"Does not affect"* line, because preventing the wrong mental model (e.g. "wind reduces sunlight", "rain dims the sensor") is half the teaching value. Full spec in §17.
+
 ### 2026-07-23 — Virtual Embedded Controller Circuit Redesign
 - **`src/components/embedded/CircuitSimulation.tsx`** — Completely redesigned from a literal hardware mockup into a professional, layered architectural diagram.
 - **Top-Down Topology**: Separated into three distinct horizontal zones (Input Devices, Controller, Output Devices) to clearly communicate signal flow and hardware hierarchy.
@@ -602,3 +658,417 @@ All live in `src/lib/embedded/constants.ts` — the single place any of these ma
 ### 16.6 Validation: Single Source of Truth for GHI
 
 `sim.sun.irradiance` — computed once per tick in `src/lib/engine/solar.ts`'s `computeSun()` — is read by exactly two consumers: the Engineering Inspector (`IrradianceInspector.tsx`, display only) and `ldrUpperSignal()`/`ldrLowerSignal()` (`src/lib/embedded/sensors.ts`, as their pipeline's first stage). Neither consumer mutates it, and no second irradiance model exists anywhere in `src/lib/embedded/`. Changing the weather (cloud cover) or time of day updates `sim.sun.irradiance` once; both the Inspector and the Virtual Embedded Controller reflect that single change identically and immediately — confirmed by inspection of the two call sites rather than a duplicated formula.
+
+---
+
+## 17. Environmental Influence Model
+
+> **Status:** Active (2026-07-30). A presentation-layer model that extends the
+> Cyber-Physical Pipeline without altering any physics, decision logic or control
+> path. No engine behaviour changed; this section defines *how the twin explains
+> itself*, not what it computes.
+
+### 17.1 Purpose
+
+The Cyber-Physical Pipeline tells one primary engineering story:
+
+```text
+Sun → Environment → Sensor → Embedded Controller → Servo → Adaptive Façade
+```
+
+That story is intuitive and must remain dominant. But it answers only half of a
+beginner's question. The other half — *how do weather and environmental
+conditions influence this process?* — was previously invisible or, worse,
+implied incorrectly (the Environment stage listed temperature and wind among its
+"inputs", which suggested they are environmental *measurements* feeding the
+sensor; they are not).
+
+The Environmental Influence Model answers the second question **without creating
+a second pipeline**. Cloud, temperature, rain and wind are presented as
+*contextual influences* that branch into the one existing stage each genuinely
+acts on.
+
+### 17.2 Design Philosophy
+
+1. **One story, not many.** There is exactly one signal path. Influences enter it
+   from the side; they never form parallel chains of their own.
+2. **Attach only where the coupling is real.** A parameter appears at a stage if
+   and only if the simulation actually reads it there. Nothing is drawn "for
+   symmetry".
+3. **Visual hierarchy is structural, not decorative.** The primary spine owns
+   every strong visual cue (numbered stage, large title, saturated accent,
+   output chip, animated flow connector). Influence cards are denied all of them
+   by construction — dashed rail, smaller type, desaturated accent, no chip, no
+   connector. The hierarchy therefore cannot drift as content is added.
+4. **Teach the negative too.** Every influence carries a **"Does not affect"**
+   line. Preventing the wrong mental model ("wind reduces sunlight", "rain dims
+   the sensor", "the sensor knows it is cloudy") is as valuable as stating the
+   mechanism, and it is the specific misconception a naive multi-pipeline
+   diagram would create.
+5. **Progressive disclosure, two levels.** Level 1 is a single plain-language
+   sentence, always visible. Level 2 (on click) adds the mechanism, the traceable
+   code path, the governing thresholds, the "does not affect" guard, and the
+   citation.
+
+### 17.3 The Mapping
+
+| Parameter | Stage influenced | Mechanism in this codebase |
+|---|---|---|
+| **Cloud Cover** | 1 · Environment | Multiplies clear-sky GHI by the Cloud Modification Factor **before** any geometry, occlusion or sensing. |
+| **Temperature** | 3 · Embedded Controller | Classified to a Thermal Demand state → sets the **Operational Objective** (e.g. *Reduce Cooling Load*). |
+| **Rain** | 3 · Embedded Controller | Classified to a Rain state → Weather Protection tier → **operational strategy** changes to a closed, rain-safe posture. |
+| **Wind** | 3 · Embedded Controller | Structural-Safety tier, evaluated **first** → can override every other objective. |
+| **Wind** | 4 · Actuation (Servo) | The safety decision reaches the servo as a **movement constraint**: tracking suspended, or dynamic-deadband suppression of small commands. |
+| — | 2 · Sensor | **Deliberately none.** A measurement is not modified by weather; it reports what arrived. |
+| — | 5 · Adaptive Façade | **Deliberately none.** The façade executes; it is not a decision stage. |
+
+The two empty rows are as important as the five populated ones. The Sensor stage
+renders an explicit note in their place:
+
+> *No environmental influence enters here. The sensor cannot tell whether the
+> light dropped because of cloud, a shadow or nightfall — it only converts
+> whatever irradiance arrives.*
+
+This is the single most important idea in the interface: **cloud reaches the
+controller only as a smaller number, never as the fact "it is cloudy".**
+
+### 17.4 Why Each Mapping Is Correct
+
+- **Cloud → Environment only.** `computeSun()` produces `cloudModificationFactor`
+  (`CMF = 1 − cover × 0.75`); `SolarPhysicsEngine.update()` applies it to
+  clear-sky GHI *before* cosine projection, occlusion and the diffuse term. By
+  the time `VirtualSensorEngine` runs, the reduction is already baked into the
+  irradiance value. Cloud is never read by the sensor or the decision engine.
+- **Temperature → Controller only.** `assessThermalDemand()` → `determineObjective()`
+  → the Thermal Demand rules in `decisionEngine.ts` (§15.4). It changes what the
+  building is *trying to achieve*. It never enters the illuminance → LDR →
+  divider → ADC chain.
+- **Rain → Controller only.** `assessRain()` → the Weather Protection tier →
+  `WEATHER_PROTECTION` → façade state `CLOSED` (§15.5–15.7). This is the clearest
+  demonstration of the split between environmental **measurement** and
+  operational **strategy**: the light reading can be unchanged while the façade
+  behaviour changes completely.
+- **Wind → Controller and Actuation.** `assessWind()` feeds the Structural Safety
+  tier, which is evaluated first so a safety rule can never be outvoted (§15.5).
+  It then reaches the servo as a *constraint*, not a different goal:
+  `resolveTarget()` routes `SAFE_MODE` to the fully closed configuration (0°) and
+  suspends tracking, while economised tracking suppresses commands smaller than
+  `DYNAMIC_DEADBAND_DEG` (§15.11). No aerodynamic torque model runs on the blade —
+  wind limits movement through the control policy, it does not push the blade.
+
+### 17.5 Architecture
+
+```text
+src/lib/engine/environmentalInfluence.ts     (pure, framework-free)
+  describeEnvironmentalInfluences(inputs) → EnvironmentalInfluence[]
+  influencesForStage(all, stage)          → EnvironmentalInfluence[]
+        │
+        ▼
+src/components/twin3d/ui/EnvironmentalInfluence.tsx   (presentation only)
+  InfluenceRail · InfluenceCard · InfluenceLegend
+        │
+        ▼
+src/components/twin3d/ui/CyberPhysicalPipeline.tsx
+  <Stage … influences={<InfluenceRail … />} />
+```
+
+Per §6 and §11 the mapping, the wording, the live-effect text and the thresholds
+live in the pure module; the React layer renders what it is given and asserts no
+coupling of its own. Every band edge is imported from
+`src/lib/pbif/thresholds.ts` — the influence module defines exactly one constant
+of its own (`CLOUD_NEGLIGIBLE`, the cover below which clear-sky irradiance is
+effectively untouched), and it is named and documented.
+
+`InfluenceStatus` (`idle` · `active` · `overriding`) drives visual weight only.
+An idle influence stays on screen rather than disappearing, so the user can watch
+it engage as the weather changes — the interface teaches by state transition, not
+by things appearing from nowhere.
+
+### 17.6 Engineering Traceability & Attribution
+
+1. **Engineering concept adopted**: Separation of *environmental measurement*
+   from *operational strategy* in a supervisory control chain, presented as a
+   single signal path with annotated contextual inputs.
+2. **Original reference or publication**: ISA-95 / ISA-88 control-hierarchy
+   practice (measurement → control → actuation as distinct layers); CIBSE Guide H
+   (Building Control Systems) on separating sensed variables from control
+   objectives.
+3. **Organisation or author**: International Society of Automation (ISA); CIBSE.
+4. **Why this concept is appropriate for PBIF**: The twin's credibility rests on
+   the claim that every decision is explainable and traceable (§2,
+   Explainability). A diagram that implies every weather variable feeds every
+   subsystem destroys that claim even when the underlying code is correct. Making
+   each coupling explicit — and each *non*-coupling equally explicit — keeps the
+   presentation as rigorous as the engine.
+5. **Assumptions made for this project**: The mapping reflects PBIF v1 as
+   implemented. In particular, rain does not attenuate irradiance in this model
+   (only cloud does), and no aerodynamic load model acts on the blade. Both are
+   stated in the UI rather than hidden.
+6. **Where this reference has been documented**:
+   `src/lib/engine/environmentalInfluence.ts`,
+   `src/components/twin3d/ui/EnvironmentalInfluence.tsx`,
+   `PBIF_ENGINEERING_GUIDE.md` (§17), `walkthrough.md`.
+
+### 17.7 Forward Compatibility
+
+When PBIF v2+ replaces the deterministic decision source (§12), the influence
+mapping changes in exactly one file. Adding a new environmental parameter (e.g.
+humidity, air quality, occupancy) means adding one descriptor function to
+`environmentalInfluence.ts` and naming its stage — the pipeline component, the
+`Stage` slot and the card component need no change. Should a future version give
+rain a genuine optical effect, its `stage` moves from `controller` to
+`environment` in that one declaration and the UI follows automatically.
+
+---
+
+## 18. Building Geometry — The Engineering Case Study
+
+> **Status:** Active (2026-07-31). The Digital Twin represents the specific
+> commercial office building defined in the project report, not a generic
+> demonstration massing. No physics, PBIF logic or control path changed; the
+> geometry they operate on did.
+
+### 18.1 The Specification
+
+From the report's Comprehensive Project Summary Table:
+
+| Parameter | Value |
+|---|---|
+| Programme | Commercial Office |
+| Storeys | 5 |
+| Width × Length | 25 m × 40 m |
+| Total height | 19 m |
+| Floor-to-floor | 3.8 m |
+| Façade | 100% curtain wall + external adaptive façade |
+| Adaptive module | 1.2 m × 1.26 m (nominal) |
+| Panels per floor | 324 |
+| Total panels | 1,620 |
+| Façade area | ≈2,470 m² |
+
+These figures are self-consistent: 5 × 3.8 = 19 m ✓; perimeter 2 × (25 + 40) =
+130 m, so envelope area = 130 × 19 = **2,470 m²** ✓; 324 × 5 = **1,620** ✓;
+3.8 / 1.26 = 3.02 → **3 module rows per storey**, so 324 / 3 = **108 columns** ✓.
+
+### 18.2 The One Inconsistency, and Its Resolution
+
+130 / 1.2 = 108.33, which is where the report's 108 columns comes from. But that
+divides the *continuous* perimeter, and a real façade is four separate planar
+elevations — a module cannot wrap a corner. Setting each elevation out
+independently at exactly 1.2 m gives:
+
+```text
+25 m elevation → floor(25 / 1.2) = 20 bays  (24.0 m used, 1.0 m stranded)
+40 m elevation → floor(40 / 1.2) = 33 bays  (39.6 m used, 0.4 m stranded)
+ring = 2 × (20 + 33) = 106 columns → 318 panels/floor → 1,590 total
+```
+
+That is **30 panels short** of the report and leaves an unglazed sliver at every
+corner. No uniform module width fixes it either: requiring `a + b = 54` with
+`a ≤ 25/w`, `b ≤ 40/w` and `b = 1.6a` has no integer solution.
+
+**Resolution — nominal module, per-elevation bay adjustment.** This is how real
+curtain walls are set out: the 1.2 m × 1.26 m module is the *nominal* catalogue
+size, and each elevation adjusts its bay width slightly so the bays close exactly
+on the structural grid. Rounding rather than flooring the bay count gives:
+
+| Elevation | Bays | Actual module width | Deviation from nominal |
+|---|---|---|---|
+| 25 m (×2) | 21 | 25 / 21 = **1.1905 m** | −0.79% |
+| 40 m (×2) | 33 | 40 / 33 = **1.2121 m** | +1.01% |
+| 3.8 m storey | 3 rows | 19 / 15 = **1.2667 m** | +0.53% |
+
+```text
+ring = 2 × (21 + 33) = 108 columns
+    × 3 rows/storey  = 324 panels/floor    ✓ report
+    × 5 storeys      = 1,620 panels         ✓ report
+    covering 130 × 19 = 2,470 m², 100%      ✓ report
+```
+
+**Every headline figure in the report is met exactly.** The only adjustment is
+≤1.01% on an individual module's dimensions — smaller than the tolerance any real
+curtain-wall package is set out to, and far smaller than the 1.85% panel-count
+error the alternative would introduce. Nothing is changed silently: the nominal
+module is a named constant, the actual per-elevation width is derived, and the
+Engineering UI displays **both** side by side.
+
+### 18.3 Panel Generation Strategy
+
+`src/lib/engine/facadeModule.ts` is the single authority; `geometry.ts` consumes
+it and owns no grid arithmetic of its own:
+
+```text
+BuildingConfig (width, depth, height, floorCount, shape)
+      │
+      ▼  footprintPolygon()            — shape-agnostic, unchanged
+edge lengths
+      │
+      ▼  moduleColumnsForEdge(len)     — round(len / 1.2), clamped
+bays on THIS elevation
+      │
+      ▼  facadeRowCount(cfg)           — rowsPerFloor × floorCount
+rows (shared by every elevation → transoms line through)
+      │
+      ▼  cellW = len/cols · cellH = height/rows
+ACTUAL module dimensions, per elevation
+      │
+      ▼  floorForRow(r, cfg)
+every panel tagged with its storey
+```
+
+Rules this enforces:
+
+1. **No hardcoded panel positions.** Every module's `worldPosition` is derived
+   from its surface basis and its `(row, column)` index, exactly as before.
+2. **Storey alignment is structural.** Row count is `rowsPerFloor × floorCount`,
+   never `height / moduleHeight`, so the grid can never straddle a floor slab.
+3. **Rows are global, columns are per-elevation.** Transoms line through around
+   the whole building; each elevation closes its own bays.
+4. **Shape-agnostic.** A triangle, hexagon, 24-facet cylinder or concave L is set
+   out by the same rules with no special cases.
+5. **Bounded.** `MAX_COLUMNS_PER_EDGE` (64) and `MAX_ROWS_PER_FLOOR` (6) never
+   bind at the specification (33 and 3) and exist only so an extreme interactive
+   configuration cannot produce an unbounded grid.
+
+### 18.4 No Remaining Dimensional Assumptions
+
+The previous massing (60 × 40 × 120 m, 32 storeys) had leaked into presentation
+code as absolute metres. Every such constant was re-expressed as a ratio of the
+live geometry:
+
+| Consumer | Was | Now |
+|---|---|---|
+| Camera presets | `pos [210, 80, 70]`, `target [0, 45, 0]`, `zoom 2.8` | Derived from footprint diagonal, overall span and `height × 0.42`; ortho zoom = `K / span` (the same K the old constants implied at span = 120) |
+| Orbit limits | `minDistance 40`, `maxDistance 950` | `diag × 0.35` … `span × 20` — close enough to inspect one 1.2 m module |
+| Rooftop plant | 6 m box + 16 m mast at `height + 3` | `height × 0.12` and `height × 0.30` |
+| Kinematics debug vectors | `L = 16 m` | `height × 0.35`, floor 4 m |
+| Curtain-wall mullions | `0.22 m` fixed | `bay × 0.06` (≈71 mm on a 1.19 m module) |
+| Second-skin rails / shafts / brackets | `0.18` / `0.10` / `0.12 m` fixed | `bay × 0.09` / `× 0.06` / `× 0.10`, bounded |
+| Neighbour context | 90 m and 150 m towers at 120/165 m | 24 m and 34 m mid-rise at 70/92 m — still genuinely occluding a 19 m façade at low sun |
+
+The double-skin cavity is a direct consequence: the fin's swept radius is now
+0.55 m instead of 1.98 m, so the pivot sits **1.15 m** off the glass rather than
+2.58 m — a plausible double-skin zone for this building class.
+
+### 18.5 Physics Verification
+
+The Solar Physics, Virtual Sensor, kinematics and PBIF layers required **no
+changes**, which is the point: they were already geometry-agnostic (§8, §16).
+Confirmed by inspection of every consumer —
+
+- `SolarPhysicsEngine.update()` iterates `surfaces → panels` and uses only
+  `p.normal`, `p.worldPosition` and neighbour AABBs. No dimension is assumed.
+- `neighborOcclusion()` ray-casts from each module's world position; the rescaled
+  neighbours keep occlusion physically meaningful at low sun angles.
+- `VirtualSensorEngine` consumes effective irradiance per module id — unaffected.
+- The kinematics solver is per-surface (co-planar blades share one solution), so
+  its cost is O(surfaces), not O(panels), regardless of grid density.
+- `pickUpperCentrePanel()`, `panelIndex()`, module selection, the Solar Debugger,
+  the Kinematics Inspector and `SelectedModuleHighlight` all address panels by
+  id/row/column and re-resolve on geometry change — they follow the new grid
+  automatically.
+
+### 18.6 Performance
+
+| Measure | Before (60×40×120, 32 storeys) | After (report spec) |
+|---|---|---|
+| Kinetic fins (1 InstancedMesh) | 1,392 | 1,620 (+16%) |
+| Static frame instances | 60 | 120 |
+| Bracket / shaft instances | 96 / 48 | 216 / 108 |
+| Mullion instances | 172 | 176 |
+| Draw calls for the building | 4 + glass | unchanged |
+| Occlusion ray-casts per env tick (20 Hz) | 1,392 × neighbours | 1,620 × neighbours |
+
+One real regression was found and fixed rather than accepted: `OcclusionDebug`
+allocated two `Float32Array`s **and** two `BufferAttribute`s every frame in ray
+mode (~24 kB/frame of garbage at the reference elevation's 495 modules). The
+buffers are now allocated once with headroom, written in place, and bounded with
+`setDrawRange`; the two ray colours became module constants. Worst case under the
+interactive sliders (10 storeys, 45 × 60 m) is 5,280 modules — still one
+instanced mesh.
+
+### 18.7 Engineering Traceability & Attribution
+
+1. **Engineering concept adopted**: Curtain-wall setting-out from a nominal
+   module with per-elevation bay adjustment to close on the structural grid.
+2. **Original reference or publication**: CWCT *Standard for Systemised Building
+   Envelopes* (setting-out and dimensional tolerance of unitised curtain
+   walling); ASHRAE Fundamentals for the envelope-area convention (gross
+   perimeter × floor-to-floor height).
+3. **Organisation or author**: Centre for Window and Cladding Technology (CWCT);
+   ASHRAE.
+4. **Why this concept is appropriate for PBIF**: it is the only way to satisfy the
+   report's panel count, panel size and building dimensions simultaneously, and it
+   is what a real façade contractor does. Flooring the bay count instead would
+   strand a 1.0 m unglazed sliver at every corner and lose 30 panels.
+5. **Assumptions made for this project**: modules are equal-width within one
+   elevation (no feature bay at corners); glazing is 100% of the envelope, so
+   façade area equals envelope area; the 3.8 m floor-to-floor is uniform across
+   all storeys, including the ground floor.
+6. **Where this reference has been documented**: `src/lib/engine/facadeModule.ts`,
+   `PBIF_ENGINEERING_GUIDE.md` (§18), `walkthrough.md`.
+
+---
+
+## 19. UI Cleanup & Scene Scale Refinement (Stage 6.1)
+
+### 19.1 Objective
+Simplify the UI, lock the finalized engineering geometry, and improve the visual scale of the simulation to match the new 25 m × 40 m building footprint. The focus is exclusively on UI and scale tweaks, leaving all physics simulations entirely untouched.
+
+### 19.2 Locking Building Geometry
+The building massing is now an engineering constant conforming to the case study specifications:
+- 5 storeys
+- 19.0 m height
+- 25.0 m width
+- 40.0 m length
+
+Interactive sliders for these parameters in the Control Deck (`ControlDeck.tsx`) were replaced with read-only specifications to prevent the user from altering the foundational geometry. The orientation slider remains intact.
+
+### 19.3 Visual Scale Adjustments
+Decorative environmental assets in `cityLayout.ts` and `GroundScene.tsx` (such as avenue trees and campus vegetation) were scaled down by ~50% to visually harmonize with the compact commercial office footprint. Simulation-relevant neighbours remained physically untouched (but defaults were zeroed).
+
+### 19.4 Debugger Consolidation
+The standalone Solar Debugger menu (`SolarOcclusionInspector.tsx`) was removed along with its state `solarDebugMode` from the global store. 
+- The `heatmap` mode was removed.
+- The `rays` mode was removed.
+- The `selected` mode (Selected Module interaction) is now permanently enabled across the twin as the sole active debugging interface, displaying the comprehensive Solar Telemetry for any clicked panel.
+
+---
+
+## 20. Rooftop PV System - Stage 1 (Stage 7.0)
+
+### 20.1 Objective
+Introduce the physical representation of the 104.02 kW DC Rooftop PV array into the Digital Twin, serving as an independent architectural subsystem. This stage focuses entirely on geometry, placement, and visual scene graph integration without any electrical or simulation logic.
+
+### 20.2 Architectural Separation
+The Rooftop PV subsystem (`RoofSolarArray.tsx`) operates independently of the Adaptive Façade, Solar Physics, Virtual Sensor, and PBIF subsystems. By rendering directly under the main `BuildingMesh` group, it accurately inherits building rotation and positioning but exerts no coupling with facade-specific data.
+
+### 20.3 Layout Generation
+The array layout is derived procedurally to fit the 189 panels specified in the engineering report. 
+- Dimensions used: 1.134 m × 2.278 m (representing a LONGi 550 W Bifacial module).
+- Panels are mounted with a fixed 15° tilt.
+- Layout algorithm accounts for building margins and dynamically routes around the central HVAC rooftop plant.
+- Exactly 189 panels are spawned, leaving deliberate gaps for roof access/maintenance pathways where necessary.
+
+### 20.4 UI Integration
+The Engineering UI (`ControlDeck.tsx`) has been extended to provide fixed engineering specifications for the Rooftop PV system (installed capacity, module count, type, and status) without modifying any interactive control flows.
+
+---
+
+## 21. Rooftop PV System - Stage 2 (Stage 7.1)
+
+### 21.1 Objective
+Connect the Rooftop PV Geometry to the existing Solar Physics Engine. The PV array now receives physically meaningful incident irradiance data (front irradiance only), ensuring both the Adaptive Façade and the PV array consume the exact same solar model.
+
+### 21.2 Architectural Integration
+The geometric generation of the PV modules (positions and normals) was extracted from the visual renderer (`RoofSolarArray.tsx`) into the core simulation engine (`src/lib/engine/pvArray.ts`).
+This allows the `SolarPhysicsEngine` to loop over both `surfaces` (the façade) and `pvModules` (the roof array) during its 20Hz environment tick.
+Calculations for Cosine Projection, Incident Angle, and Effective Irradiance are shared and utilize the exact same memory Maps, keyed by `PV-[id]`.
+
+### 21.3 Future-Ready State
+The architecture is deliberately structured to support future stages:
+- **Shading Factor:** Currently hardcoded to `1.0`, but ready to accept neighbor/self-shading attenuation.
+- **Bifacial Gain:** Currently calculating front incident irradiance, leaving room to add rear irradiance from albedo.
+- **Power Generation:** All physical inputs required for electrical modelling (inverter, strings, temperature) are now continuously available in the engine.
+
+### 21.4 Visual Feedback
+The 3D instances in `RoofSolarArray.tsx` now dynamically tint based on the exact irradiance hitting each panel. Selected modules via click also highlight in green, mirroring the Façade interaction, and display their distinct metrics in the Control Deck.

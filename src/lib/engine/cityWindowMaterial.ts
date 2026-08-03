@@ -50,7 +50,7 @@ export function getCityWindowMaterial(): THREE.MeshStandardMaterial {
   if (cached) return cached
 
   const mat = new THREE.MeshStandardMaterial({
-    color: '#3a424e',
+    color: '#5a6066',
     metalness: 0.32,
     roughness: 0.62,
     // Emissive is BLACK by default so the façade only glows where windows are lit
@@ -99,21 +99,15 @@ export function getCityWindowMaterial(): THREE.MeshStandardMaterial {
           return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
         }
 
-        // Is a given window cell lit right now? Clustered + slowly drifting.
-        float windowLit(vec2 cell, float seed, float t) {
+        // Is a given window cell lit right now? Clustered and static.
+        float windowLit(vec2 cell, float seed) {
           // Office "sections" (3 wide × 4 tall) share an occupancy bias so whole
           // wings / floors light up together rather than as random speckle.
           vec2 section = floor(cell / vec2(3.0, 4.0));
           float occ = cityHash(section + seed * 7.0);
           float prob = mix(0.06, 0.55, occ);
-          // Slow ~26 s buckets, cross-faded → the pattern changes over long
-          // periods rather than flickering frame to frame.
-          float tb = t / 26.0;
-          float b = floor(tb);
-          float f = smoothstep(0.0, 1.0, fract(tb));
-          float r0 = cityHash(cell + seed * 3.1 + b * 13.0);
-          float r1 = cityHash(cell + seed * 3.1 + (b + 1.0) * 13.0);
-          float r = mix(r0, r1, f);
+          // Fixed pattern per cell for stable night lighting.
+          float r = cityHash(cell + seed * 3.1);
           return step(1.0 - prob, r);
         }`,
       )
@@ -140,11 +134,9 @@ export function getCityWindowMaterial(): THREE.MeshStandardMaterial {
             vec2 fp = fract(g);
             // Dark frame between panes → discrete windows, not a glowing wall.
             float pane = step(0.16, fp.x) * step(fp.x, 0.84) * step(0.14, fp.y) * step(fp.y, 0.9);
-            float lit = windowLit(cell, vSeed, uCityTime) * pane;
+            float lit = windowLit(cell, vSeed) * pane;
             float bright = 0.55 + 0.45 * cityHash(cell + vSeed * 5.0);
-            vec3 warm = vec3(1.0, 0.82, 0.52);
-            vec3 cool = vec3(0.72, 0.85, 1.0);
-            vec3 wcol = mix(warm, cool, step(0.62, cityHash(vec2(vSeed * 29.0))));
+            vec3 wcol = vec3(1.0, 0.93, 0.84); // #ffedd6 warm uniform glow
             // Faint daytime reflection → real interior glow after dark.
             float emit = lit * bright * (0.05 + uNight * 1.6);
             totalEmissiveRadiance += wcol * emit;

@@ -20,6 +20,9 @@ const GLASS_COLOR: Record<GlassType, string> = {
 
 const MULLION_GEOM = new THREE.BoxGeometry(1, 1, 1)
 
+/** Mullion face width as a fraction of the bay pitch (≈70 mm on a 1.2 m module). */
+const MULLION_WIDTH_RATIO = 0.06
+
 /**
  * CurtainWall — the FIRST skin (inner). The permanent building envelope: the
  * extruded sealed glazing plus an aluminium mullion/transom grid that divides it
@@ -65,12 +68,15 @@ export function CurtainWall() {
   // Mullion + transom grid, world-space, sat just proud of the glass plane.
   const mullions = useMemo(() => {
     const mats: THREE.Matrix4[] = []
-    const barW = 0.22
     const barDepth = 0.4
     // Pull back from the surface (which sits at the standoff plane) onto the glass.
     const dnGlass = -(facadeDepth + 0.15) + 0.06
     for (const s of getSimulation().skin.getAllSurfaces()) {
       const { cols, rows } = surfaceGrid(s.panels)
+      // Mullion face width scales with the bay pitch, so a 1.2 m curtain-wall
+      // module reads as a real ~70 mm profile rather than the chunky bar that
+      // suited the old 4.2 m bays. Bounded to stay renderable at any grid.
+      const barW = Math.min(0.22, Math.max(0.05, (s.width / cols) * MULLION_WIDTH_RATIO))
       for (let c = 0; c <= cols; c++) {
         const du = (c / cols - 0.5) * s.width
         mats.push(barMatrix(s.center, s.right, s.up, s.normal, du, 0, dnGlass, [barW, s.height, barDepth]))
@@ -84,7 +90,12 @@ export function CurtainWall() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [building])
 
-  const roofY = height + 3
+  // Rooftop plant, proportioned to the building rather than to absolute metres —
+  // a 5-storey office gets a low plant enclosure, not a tower's mechanical floor.
+  const plantHeight = Math.max(1.6, height * 0.12)
+  const mastHeight = Math.max(3, height * 0.3)
+  const roofY = height + plantHeight / 2
+  const mastY = roofY + plantHeight / 2 + mastHeight / 2
 
   return (
     <>
@@ -111,11 +122,11 @@ export function CurtainWall() {
         </mesh>
         {/* Rooftop plant (part of the building core) */}
         <mesh castShadow position={[0, roofY, 0]}>
-          <boxGeometry args={[width * 0.42, 6, depth * 0.42]} />
+          <boxGeometry args={[width * 0.42, plantHeight, depth * 0.42]} />
           <meshStandardMaterial color="#2a2f38" metalness={0.4} roughness={0.6} />
         </mesh>
-        <mesh position={[0, roofY + 11, 0]}>
-          <cylinderGeometry args={[0.4, 0.4, 16, 8]} />
+        <mesh position={[0, mastY, 0]}>
+          <cylinderGeometry args={[0.2, 0.2, mastHeight, 8]} />
           <meshStandardMaterial color="#4a4f57" />
         </mesh>
       </group>

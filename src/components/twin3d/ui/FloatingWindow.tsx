@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion, AnimatePresence, useMotionValue } from 'framer-motion'
 import { ChevronDown, X, type LucideIcon } from 'lucide-react'
 import { useWindowStore, WINDOW_Z_BASE, type WindowId } from '@/lib/dt/windowStore'
 
@@ -75,17 +75,20 @@ export function FloatingWindow({
 
   // Local, live transform state seeded from the store; written back on gesture
   // end so we persist final values without thrashing localStorage mid-drag.
-  const [pos, setPos] = useState({ x: win?.x ?? defaultX, y: win?.y ?? defaultY })
-  const [width, setWidth] = useState(win?.w ?? defaultW)
+  // We use useMotionValue to completely bypass React render phase during drags!
+  const x = useMotionValue(win?.x ?? defaultX)
+  const y = useMotionValue(win?.y ?? defaultY)
+  const w = useMotionValue(win?.w ?? defaultW)
 
   // Re-seed from the store when it changes externally (e.g. persisted restore),
   // but never while the user is actively dragging/resizing this window.
   const interacting = useRef(false)
   useEffect(() => {
     if (interacting.current) return
-    setPos({ x: win?.x ?? defaultX, y: win?.y ?? defaultY })
-    setWidth(win?.w ?? defaultW)
-  }, [win?.x, win?.y, win?.w, defaultX, defaultY, defaultW])
+    x.set(win?.x ?? defaultX)
+    y.set(win?.y ?? defaultY)
+    w.set(win?.w ?? defaultW)
+  }, [win?.x, win?.y, win?.w, defaultX, defaultY, defaultW, x, y, w])
 
   const zIndex = WINDOW_Z_BASE + Math.max(0, order.indexOf(id))
 
@@ -93,7 +96,7 @@ export function FloatingWindow({
   const drag = useRef({ pressed: false, moved: false, sx: 0, sy: 0, ox: 0, oy: 0 })
   const onDragDown = (e: React.PointerEvent) => {
     focus(id)
-    drag.current = { pressed: true, moved: false, sx: e.clientX, sy: e.clientY, ox: pos.x, oy: pos.y }
+    drag.current = { pressed: true, moved: false, sx: e.clientX, sy: e.clientY, ox: x.get(), oy: y.get() }
   }
   const onDragMove = (e: React.PointerEvent) => {
     const d = drag.current
@@ -107,7 +110,8 @@ export function FloatingWindow({
       e.currentTarget.setPointerCapture(e.pointerId)
       setGlobalTextSelection(false)
     }
-    setPos({ x: Math.max(MIN_X, d.ox + dx), y: Math.max(NAV_CLEARANCE_Y, d.oy + dy) })
+    x.set(Math.max(MIN_X, d.ox + dx))
+    y.set(Math.max(NAV_CLEARANCE_Y, d.oy + dy))
   }
   const onDragUp = () => {
     const d = drag.current
@@ -116,7 +120,7 @@ export function FloatingWindow({
     if (!d.moved) return
     d.moved = false
     interacting.current = false
-    setPosition(id, Math.max(MIN_X, pos.x), Math.max(NAV_CLEARANCE_Y, pos.y))
+    setPosition(id, Math.max(MIN_X, x.get()), Math.max(NAV_CLEARANCE_Y, y.get()))
   }
 
   /* ── Resize (bottom-right corner) ───────────────────────────────────────── */
@@ -124,7 +128,7 @@ export function FloatingWindow({
   const onRezDown = (e: React.PointerEvent) => {
     e.stopPropagation()
     focus(id)
-    rez.current = { pressed: true, moved: false, sx: e.clientX, ow: width }
+    rez.current = { pressed: true, moved: false, sx: e.clientX, ow: w.get() }
   }
   const onRezMove = (e: React.PointerEvent) => {
     const r = rez.current
@@ -137,7 +141,7 @@ export function FloatingWindow({
       e.currentTarget.setPointerCapture(e.pointerId)
       setGlobalTextSelection(false)
     }
-    setWidth(Math.min(MAX_SIZE.w, Math.max(MIN_SIZE.w, r.ow + dx)))
+    w.set(Math.min(MAX_SIZE.w, Math.max(MIN_SIZE.w, r.ow + dx)))
   }
   const onRezUp = () => {
     const r = rez.current
@@ -146,7 +150,7 @@ export function FloatingWindow({
     if (!r.moved) return
     r.moved = false
     interacting.current = false
-    setSize(id, width, win?.h ?? 0)
+    setSize(id, w.get(), win?.h ?? 0)
   }
 
   return (
@@ -154,8 +158,8 @@ export function FloatingWindow({
       {open && (
         <motion.div
           key={id}
-          className="glass-strong pointer-events-auto absolute flex flex-col overflow-hidden rounded-3xl"
-          style={{ left: pos.x, top: pos.y, width, maxWidth: '92vw', zIndex }}
+          className="glass-panel pointer-events-auto absolute flex flex-col overflow-hidden rounded-3xl"
+          style={{ left: x, top: y, width: w, maxWidth: '92vw', zIndex }}
           onPointerDown={() => focus(id)}
           initial={{ opacity: 0, scale: 0.92, y: 8 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}

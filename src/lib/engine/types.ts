@@ -10,6 +10,13 @@
 
 import type { Vec3 } from './math'
 import type { PanelState } from './panelStates'
+import type { FacadeLayoutSummary } from './facadeModule'
+import type { BuildingEnergySnapshot } from './buildingEnergy'
+import type { BatteryState } from './battery'
+import type { GridState } from './grid'
+import type { DailyEnergyTotals } from './energyLedger'
+import type { WeatherTimelineStatus } from './weatherScenario'
+import type { ForecastStatus } from './liveForecast'
 
 // ---------------------------------------------------------------------------
 // Clock
@@ -90,10 +97,17 @@ export type BuildingShape = 'rectangle' | 'triangle' | 'hexagon' | 'cylinder' | 
 
 export interface BuildingConfig {
   shape: BuildingShape
+  /** Occupancy / programme of the case-study building, for the Engineering UI. */
+  buildingType: string
   /** Metres. `width` is the footprint span / diameter. */
   height: number
   width: number
   depth: number
+  /**
+   * Storeys. Together with `height` this fixes the floor-to-floor height, which
+   * in turn sets how many adaptive-module rows fit within one storey — see
+   * `facadeModule.ts`. The façade grid is therefore always storey-aligned.
+   */
   floorCount: number
   /** Free rotation of the whole building, 0–360°. Rotates surface normals — never renames them. */
   orientation: number
@@ -139,8 +153,12 @@ export interface RotationLimits {
 export interface FacadePanel {
   id: string
   surfaceId: string
+  /** Module row on its elevation. Row 0 is the TOP of the façade. */
   row: number
+  /** Module column (bay) on its elevation, left to right along `surface.right`. */
   column: number
+  /** Storey this module belongs to. 0 = ground floor. */
+  floor: number
   worldPosition: Vec3
   /** Outward normal, inherited from the parent surface (before blade rotation). */
   normal: Vec3
@@ -196,6 +214,16 @@ export interface BuildingSurface {
   glassRatio: number
   panels: FacadePanel[]
 }
+
+// ---------------------------------------------------------------------------
+// Rooftop PV 
+// ---------------------------------------------------------------------------
+export interface PVModule {
+  id: string
+  worldPosition: Vec3
+  normal: Vec3
+}
+
 
 // ---------------------------------------------------------------------------
 // Metrics — per-surface, then aggregated for the whole building
@@ -283,8 +311,35 @@ export interface SimSnapshot {
     uvErythemalClearSky: number; uvCloudModificationFactor: number; ozoneDU: number
   }
   weather: WeatherState
+  /** Weather source + position along the active timeline (Stage 7.7). */
+  weatherSource: WeatherTimelineStatus
+  /** Live Forecast Engine connection, cache and provenance (Stage 7.8). */
+  forecast: ForecastStatus
   metrics: BuildingMetrics
   surfaces: SurfaceSummary[]
+  /** As-built adaptive-façade layout, measured off the generated panels. */
+  facade: FacadeLayoutSummary
+  /** BEMS — building demand, the AC bus and the live energy balance. */
+  energy: BuildingEnergySnapshot
+  /** BESS — state of charge and charge/discharge dispatch. */
+  battery: BatteryState
+  /** Utility grid — the balancing component's live exchange and state. */
+  grid: GridState
+  /** Daily energy totals across every bus flow, reset at simulated midnight. */
+  daily: DailyEnergyTotals
+  pvStatus: string
+  pvAverageIrradiance: number
+  pvInstalledCapacity: number
+  pvCurrentDCOutput: number
+  pvAverageModuleOutput: number
+  pvOperatingModules: number
+  pvUtilization: number
+  invRatedCapacityKW: number
+  invCurrentDCOutput: number
+  invCurrentACOutput: number
+  invEfficiency: number
+  invConversionLossKW: number
+  invOperatingState: string
   orientation: number
   shape: BuildingShape
   skinMode: SkinMode

@@ -25,6 +25,13 @@ export const SERVO_MIN_DEG = 0
 export const SERVO_MAX_DEG = 180
 
 /**
+ * Remaining travel at or below which the blade counts as settled rather than
+ * moving. Defined once here so the engine's `ServoState.moving` and every
+ * "Servo Status" readout in the UI agree on what "holding" means.
+ */
+export const SERVO_SETTLED_DEG = 0.5
+
+/**
  * PWM pulse width at 0°/180°, µs. 1000–2000 µs spanning the full 180° travel
  * (centre ≈ 1500 µs at 90°) is a common simplified hobby-servo convention;
  * real hardware varies by brand (e.g. 500–2400 µs). Documented here as the

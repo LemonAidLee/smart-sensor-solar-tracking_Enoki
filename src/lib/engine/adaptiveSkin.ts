@@ -23,7 +23,6 @@ import type {
   BuildingMetrics,
   BuildingSurface,
   FacadePanel,
-  NeighborBuilding,
   SkinMode,
   SunState,
   SurfaceMetrics,
@@ -32,9 +31,10 @@ import type {
 } from './types'
 import { clamp, dot, lerp, rad2deg, smoothstep } from './math'
 import { generateSurfaces } from './geometry'
-import { neighborAabb, type Aabb } from './building'
-import { neighborOcclusion, verticalGradient } from './shading'
-import { computeBuildingMetrics, computeSurfaceMetrics } from './metrics'
+import { summariseFacadeLayout, type FacadeLayoutSummary } from './facadeModule'
+import { computeBuildingMetrics, computeSurfaceMetrics, normalisedExposure } from './metrics'
+import type { SolarPhysicsEngine } from './solarPhysics'
+import type { VirtualSensorEngine } from './virtualSensor'
 import {
   angleForOpenness,
   describeAngle,
@@ -71,6 +71,8 @@ export class AdaptiveSkinEngine {
   private surfaces: BuildingSurface[] = []
   private flat: FacadePanel[] = []
   private byId = new Map<string, FacadePanel>()
+  /** As-built façade layout. Recomputed ONLY in `rebuild()` — never per frame. */
+  private facadeLayout!: FacadeLayoutSummary
 
   private program: Program = 'auto'
   private manualRotation = 90
@@ -111,8 +113,6 @@ export class AdaptiveSkinEngine {
   // runs at the render rate. Blade easing still happens every frame (see below).
   private vSolar: SolarVector | null = null
   private vLocalSun: SunState | null = null
-  private vBoxes: Aabb[] = []
-  private vSunI = 0
 
   constructor(cfg: BuildingConfig) {
     this.rebuild(cfg)
@@ -142,6 +142,12 @@ export class AdaptiveSkinEngine {
     this.surfaces = next
     this.flat = next.flatMap((s) => s.panels)
     this.byId = new Map(this.flat.map((p) => [p.id, p]))
+    this.facadeLayout = summariseFacadeLayout(next, cfg)
+  }
+
+  /** As-built adaptive-façade layout (panel counts, module sizes, areas). */
+  getFacadeLayout(): FacadeLayoutSummary {
+    return this.facadeLayout
   }
 
   // ==========================================================================
@@ -317,7 +323,8 @@ export class AdaptiveSkinEngine {
     cfg: BuildingConfig,
     sun: SunState,
     weather: WeatherState,
-    neighbors: NeighborBuilding[],
+    solarPhysics: SolarPhysicsEngine,
+    virtualSensor: VirtualSensorEngine,
     dt: number,
     resolve = true,
   ): void {
@@ -326,9 +333,9 @@ export class AdaptiveSkinEngine {
     this.waveTime += step * (0.3 + weather.windStrength * 0.6)
 
     if (WEATHER_VALIDATION_MODE) {
-      this.updateValidation(cfg, sun, weather, neighbors, step, resolve)
+      this.updateValidation(cfg, sun, weather, solarPhysics, virtualSensor, step, resolve)
     } else {
-      this.updateFull(sun, weather, neighbors, step)
+      this.updateFull(sun, weather, solarPhysics, virtualSensor, step)
     }
   }
 
@@ -342,15 +349,14 @@ export class AdaptiveSkinEngine {
     cfg: BuildingConfig,
     sun: SunState,
     weather: WeatherState,
-    neighbors: NeighborBuilding[],
+    solarPhysics: SolarPhysicsEngine,
+    virtualSensor: VirtualSensorEngine,
     step: number,
     resolve: boolean,
   ): void {
     if (resolve) {
       this.lastSun = sun
       this.lastWeather = weather
-      this.vBoxes = neighbors.map(neighborAabb)
-      this.vSunI = clamp(sun.irradiance / 1000)
       const worldSolar = solarVector(sun.altitude, sun.azimuth)
       this.vSolar = transformSolarVector(worldSolar, cfg.orientation)
       // Transform the sun state so physics uses local vectors.
@@ -360,7 +366,7 @@ export class AdaptiveSkinEngine {
       this.pbifEvaluation = evaluatePbif({
         windSpeed: weather.windSpeed,
         rainIntensity: weather.rainIntensity,
-        cloudCoverage: weather.cloudCoverage,
+        solarADC: virtualSensor.getGlobalFilteredADC(),
         outdoorTemperature: weather.temperature,
       })
     }
@@ -388,7 +394,7 @@ export class AdaptiveSkinEngine {
 
       for (const p of s.panels) {
         if (resolve) {
-          this.physics(p, rows, localSun, weather, this.vBoxes, this.vSunI)
+          this.physics(p, rows, sun, weather, solarPhysics)
           p.healthStatus = 'ok'
           const t = target ?? this.manualRotation
           p.targetRotation = t
@@ -413,17 +419,15 @@ export class AdaptiveSkinEngine {
   }
 
   /** Full simulation (non-validation): per-frame motor model, unchanged. */
-  private updateFull(sun: SunState, weather: WeatherState, neighbors: NeighborBuilding[], step: number): void {
+  private updateFull(sun: SunState, weather: WeatherState, solarPhysics: SolarPhysicsEngine, virtualSensor: VirtualSensorEngine, step: number): void {
     this.lastSun = sun
     this.lastWeather = weather
-    const boxes: Aabb[] = neighbors.map(neighborAabb)
     const waveActive = this.animTime < this.waveUntil
-    const sunI = clamp(sun.irradiance / 1000)
 
     for (const s of this.surfaces) {
       const rows = s.panels.length ? Math.max(...s.panels.map((p) => p.row)) + 1 : 1
       for (const p of s.panels) {
-        this.physics(p, rows, sun, weather, boxes, sunI)
+        this.physics(p, rows, sun, weather, solarPhysics)
         p.targetRotation = this.resolveTarget(p, sun, weather, waveActive)
         p.state = this.resolveState(p, waveActive)
 
@@ -462,18 +466,17 @@ export class AdaptiveSkinEngine {
     rows: number,
     sun: SunState,
     w: WeatherState,
-    boxes: Aabb[],
-    sunI: number,
+    solarPhysics: SolarPhysicsEngine,
   ): void {
     const hFrac = 1 - (p.row + 0.5) / rows
-    const inc = Math.max(0, dot(sun.worldDir, p.normal))
-    const occ = sun.isDaytime ? neighborOcclusion(p.worldPosition, sun.worldDir, boxes) : 1
-    const exposure = clamp(inc * verticalGradient(hFrac) * (1 - occ * 0.9) * sunI)
     const windward = Math.max(0, -dot(p.normal, w.windVector))
 
-    p.incidentAngle = Math.round(rad2deg(Math.acos(clamp(inc, 0, 1))))
+    const effectiveIrradiance = solarPhysics.getModuleEffectiveIrradiance(p.id)
+    const exposure = normalisedExposure(effectiveIrradiance)
+
+    p.incidentAngle = solarPhysics.getModuleIncidentAngle(p.id)
     p.solarExposure = exposure
-    p.irradiance = Math.round(exposure * 1000)
+    p.irradiance = effectiveIrradiance
     // A more-closed blade (higher shading) absorbs more of the beam → hotter skin.
     p.surfaceTemperature = Math.round((w.temperature + exposure * (10 + p.shading * 8)) * 10) / 10
     p.windLoad = clamp(windward * w.windStrength * (0.5 + 0.5 * hFrac))

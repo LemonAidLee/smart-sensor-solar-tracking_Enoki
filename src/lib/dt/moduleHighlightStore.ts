@@ -18,6 +18,9 @@ interface ModuleHighlightState {
   /** Mirrors the Virtual Embedded Controller panel's own expand/collapse state. */
   panelOpen: boolean
   setPanelOpen: (open: boolean) => void
+  /** Counter that increments when an external component requests the panel to open. */
+  triggerOpen: number
+  requestOpenPanel: () => void
 }
 
 export const useModuleHighlightStore = create<ModuleHighlightState>((set) => ({
@@ -25,4 +28,6 @@ export const useModuleHighlightStore = create<ModuleHighlightState>((set) => ({
   setScreen: (screen) => set({ screen }),
   panelOpen: false,
   setPanelOpen: (open) => set({ panelOpen: open }),
+  triggerOpen: 0,
+  requestOpenPanel: () => set((state) => ({ triggerOpen: state.triggerOpen + 1 })),
 }))

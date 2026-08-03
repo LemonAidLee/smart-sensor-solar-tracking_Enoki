@@ -6,6 +6,7 @@ import * as THREE from 'three'
 import { getSimulation } from '@/lib/engine/simulation'
 import { clamp, lerp, smoothstep } from '@/lib/engine/math'
 import { prefersReducedMotion } from '@/lib/engine/reducedMotion'
+import { rateHz } from '@/lib/engine/scheduler'
 
 /**
  * CloudLayer — procedural cloud density on a sky dome.
@@ -174,7 +175,12 @@ export function CloudLayer() {
     [],
   )
 
-  useFrame((_, dt) => {
+  const limiter = useMemo(() => rateHz(20), [])
+
+  useFrame((_, frameDt) => {
+    const dt = limiter.tick(frameDt)
+    if (dt === 0) return
+
     const m = mat.current
     if (!m) return
     const w = sim.weather
