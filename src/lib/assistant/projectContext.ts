@@ -26,8 +26,9 @@ and optimize physical interactions with environmental data.
 
 Simulation flow (each stage feeds the next, in this order): Environment
 (Weather / Forecast) → Solar Physics → Virtual Sensors → PBIF (façade
-optimizer) → Servo → Adaptive Façade → PV Array → PV Inverter → Building
-Energy → Battery → Utility Grid.
+optimizer) → Servo → Adaptive Façade → Building Thermal Response → Building
+Lighting Response → PV Array → PV Inverter → Building Energy → Battery →
+Utility Grid.
 
 Engineering rules the twin is built to: single source of truth, one
 responsibility per engine, simulation separated from visualization, no
@@ -43,14 +44,19 @@ adaptive façade kinematics, solar physics + occlusion, PBIF façade
 optimization, virtual sensors, rooftop PV + inverter, battery storage,
 utility grid balancing, the Weather Scenario Engine, real-time Open-Meteo
 forecasting, an AI Prediction Layer (12 h projection), an AI What-If sandbox,
-and an AI Fault Detection & Diagnosis monitor.
+an AI Fault Detection & Diagnosis monitor, and — since Stage 7.9/7.10 — a
+Building Thermal Response Engine and a Building Lighting Response Engine that
+COUPLE the façade's solar gain and daylight into the BEMS's real HVAC and
+lighting electrical demand (via a cooling-plant COP and a daylight-harvesting
+controller respectively, both read at equilibrium/lag rather than integrated
+hour-by-hour — state that simplification if asked for more precision than
+that, never invent a finer-grained answer).
 
 NOT YET IMPLEMENTED — treat as future work, never as present behaviour:
 energy cost / financial analytics (so cost or payback questions are
-"not modelled yet"), and direct coupling between the façade's solar thermal
-gain and the BEMS's HVAC electrical demand (today they are computed
-independently, so a façade change can show a thermal effect with zero
-electrical effect — that is correct, not a bug).`
+"not modelled yet"), and an HVAC capacity ceiling (today the cooling plant is
+always assumed able to remove exactly the heat gain admitted, so cooling
+demand never itself plateaus under extreme load).`
 
 /** Mirrors AI_KNOWLEDGE.md's purpose and governance rules — mainly so the
  *  assistant can answer meta-questions about the project's own documentation

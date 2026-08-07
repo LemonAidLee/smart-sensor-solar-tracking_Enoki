@@ -206,8 +206,11 @@ export interface TwinProjection {
   /**
    * Solar heat admitted through the skin to the glazing, kW **thermal**.
    * From `facadeSolarGainKW` in `metrics.ts` — the same authority the live
-   * surface metrics use. Note this is a façade thermal load, NOT the BEMS's
-   * electrical HVAC demand; the two are separate quantities in this twin.
+   * surface metrics use. This is the façade's thermal load, NOT the BEMS's
+   * electrical HVAC demand — they remain different quantities in different
+   * units. Since Stage 7.9 they ARE causally linked: `equilibriumThermalState`
+   * (`buildingThermal.ts`) converts this into `coolingLoadKW`'s solar share, so
+   * a change here now shows up there too, deliberately — see `coolingLoadKW`.
    */
   facadeSolarGainKW: number
   /** Daylight reaching the interior, percent. */
@@ -223,7 +226,14 @@ export interface TwinProjection {
   // ── Building ─────────────────────────────────────────────────────────────
   occupancy: number
   buildingLoadKW: number
-  /** The cooling (HVAC) share of the load, kW. */
+  /**
+   * The cooling (HVAC) share of the load, kW ELECTRICAL — base occupancy/
+   * temperature-driven HVAC plus (Stage 7.9) the façade's solar-induced
+   * cooling load from `equilibriumThermalState().coolingLoadKW`, already
+   * converted to electrical kW via the cooling plant's COP before it reaches
+   * here. See `facadeSolarGainKW` above for the thermal-side quantity it was
+   * derived from.
+   */
   coolingLoadKW: number
 
   // ── Bus / storage / grid ─────────────────────────────────────────────────

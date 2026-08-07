@@ -29,9 +29,13 @@ import { RooftopPVEngine } from './pvArray'
 import { PVElectricalEngine } from './pvElectrical'
 import { PVInverterEngine } from './pvInverter'
 import { BuildingEnergyEngine } from './buildingEnergy'
+import { BuildingThermalEngine } from './buildingThermal'
+import { BuildingLightingEngine } from './buildingLighting'
+import { facadeSolarGainKW } from './metrics'
 import { BatteryEnergyEngine } from './battery'
 import { GridEnergyEngine } from './grid'
 import { DailyEnergyLedger } from './energyLedger'
+import { bootstrapDailyEnergy } from './dailyEnergyBootstrap'
 import { VirtualSensorEngine } from './virtualSensor'
 import { compassToWorld, rotateY, deg2rad } from './math'
 import { rateHz, type RateLimiter } from './scheduler'
@@ -106,6 +110,21 @@ function pad(n: number): string {
   return n.toString().padStart(2, '0')
 }
 
+/**
+ * The site's current wall-clock instant, as a UTC-based `Date` whose UTC
+ * fields read as the SITE's local calendar date/time — `Date.now()` shifted
+ * by the building's own timezone offset, the same one the solar engine uses.
+ * The one authority both a fresh launch's initial clock (constructor) and
+ * `syncClockToSiteNow()`'s "return to now" derive their site-local date from,
+ * so the two can never disagree about what day it is at the site.
+ */
+function siteLocalNow(timezoneOffsetHours: number): Date {
+  return new Date(Date.now() + timezoneOffsetHours * 3_600_000)
+}
+
+/** Stage 7.11.1 — a fresh launch opens at this local site time, not "now". */
+const INITIAL_SIM_TIME_HOURS = 6
+
 export class Simulation {
   clock: SimClock
   building: BuildingConfig
@@ -128,6 +147,23 @@ export class Simulation {
   pvArray: RooftopPVEngine
   pvElectrical: PVElectricalEngine
   pvInverter: PVInverterEngine
+  /**
+   * Building Thermal Response Engine (Stage 7.9) — bridges the adaptive façade
+   * and the BEMS: converts the façade's solar gain into a lagged, physically
+   * meaningful cooling load rather than a hardcoded percentage. Runs
+   * immediately after the façade updates and before the BEMS consumes it.
+   */
+  buildingThermal: BuildingThermalEngine
+  /**
+   * Building Lighting Response Engine (Stage 7.10) — the second Building
+   * Physics Layer subsystem, sibling to `buildingThermal`. Converts outdoor
+   * daylight (via the façade's effective irradiance and openness) into a
+   * daylight-harvesting artificial lighting demand rather than a fixed
+   * occupancy-only load. Independently consumes façade information; neither
+   * this nor `buildingThermal` depends on the other. Runs after Building
+   * Thermal and before the PV/BEMS chain consumes it.
+   */
+  buildingLighting: BuildingLightingEngine
   /** BEMS — building demand, the AC bus and the energy balance (Stage 7.4). */
   buildingEnergy: BuildingEnergyEngine
   /** BESS — state of charge and charge/discharge dispatch (Stage 7.5). */
@@ -139,10 +175,14 @@ export class Simulation {
   virtualSensor: VirtualSensorEngine
   skin: AdaptiveSkinEngine
   /**
-   * AI Prediction Layer (Stage 8.1) — an OBSERVER, not a controller. It is never
-   * called from `tick()`; the UI pulls a cached report from `getPrediction()`.
-   * It receives a read-only context and writes nothing back, so PBIF remains the
-   * sole authority over the façade.
+   * AI Prediction Layer (Stage 8.1) — an OBSERVER, not a controller. It
+   * receives a read-only context and writes nothing back, so PBIF remains the
+   * sole authority over the façade. `tick()`'s `resolve` block DOES reach it —
+   * via `engineeringContext.update(this)` → `buildAIPrediction()` →
+   * `getPrediction()` below — but at a cost bounded by two layers of caching
+   * (`EngineeringContextBuilder`'s own coarse key, then this engine's own
+   * `TIME_BUCKET_HOURS`-quantised key), not a per-tick projection. See
+   * `predictionEngine.ts`'s header for the full reachability note.
    */
   prediction: PredictionEngine
   /**
@@ -175,7 +215,21 @@ export class Simulation {
   private lastEnergyTimeHours = 0
 
   constructor() {
-    this.clock = { date: new Date(2026, 8, 21), timeHours: 7, speed: 1, playing: false }
+    // Stage 7.11.1 — a fresh launch opens on TODAY'S real-world date at the
+    // building site, at a fixed 06:00 local time (so the twin always begins
+    // its story at sunrise, not mid-afternoon or mid-simulated-night). This
+    // is deliberately NOT `syncClockToSiteNow()` — that method also adopts
+    // the current MINUTE, which is exactly what re-entering Forecast Mode or
+    // pressing "Now" still needs (untouched, below); a fresh launch wants
+    // today's date but a fixed hour, not the operator's literal wall-clock
+    // minute at load time.
+    const siteToday = siteLocalNow(DEFAULT_BUILDING.timezone)
+    this.clock = {
+      date: new Date(siteToday.getUTCFullYear(), siteToday.getUTCMonth(), siteToday.getUTCDate()),
+      timeHours: INITIAL_SIM_TIME_HOURS,
+      speed: 1,
+      playing: false,
+    }
     this.building = { ...DEFAULT_BUILDING }
     this.neighbors = DEFAULT_NEIGHBORS.map((n) => ({ ...n }))
     this.weather = { ...DEFAULT_WEATHER }
@@ -193,6 +247,8 @@ export class Simulation {
     this.pvArray = new RooftopPVEngine(this.building)
     this.pvElectrical = new PVElectricalEngine(this.pvArray.getModules())
     this.pvInverter = new PVInverterEngine()
+    this.buildingThermal = new BuildingThermalEngine()
+    this.buildingLighting = new BuildingLightingEngine()
     this.buildingEnergy = new BuildingEnergyEngine(this.building)
     // The battery connects to the bus as a storage port, so the BEMS routes
     // through it without importing anything from the battery module.
@@ -220,13 +276,19 @@ export class Simulation {
     // Seed the BEMS so the first snapshot carries a settled load profile rather
     // than a frame of zeros. Generation is still 0 here — the PV engines are
     // first evaluated on the opening environmental tick, exactly as before.
-    // dt = 0 → the HVAC lag initialises to its target, no startup transient.
+    // The façade has not moved yet either, so the thermal chain seeds at 0 gain
+    // for the same reason. dt = 0 → both lags initialise to target, no startup
+    // transient.
     this.lastEnergyTimeHours = this.clock.timeHours
+    this.buildingThermal.update(0, 0, this.weather.temperature, this.sun.irradiance, 0)
+    this.buildingLighting.update(0, 0, this.buildingEnergy.getSnapshot().floorAreaM2, this.clock.timeHours, 0)
     this.buildingEnergy.update(
       this.clock.timeHours,
       this.weather.temperature,
       this.pvInverter.getMetrics().currentACPowerKW,
       0,
+      this.buildingThermal.getState().coolingLoadKW,
+      this.buildingLighting.getState().lightingElectricalKW,
     )
     // The grid projects the settled bus; the ledger seeds its day baseline.
     this.grid.update(this.buildingEnergy.getBusState())
@@ -234,6 +296,12 @@ export class Simulation {
     this.virtualSensor.update(this.skin.getAllSurfaces(), this.solarPhysics, 0.016)
     this.skin.update(this.building, this.sun, this.weather, this.solarPhysics, this.virtualSensor, 0)
     this.metrics = this.skin.getBuildingMetrics()
+    // Stage 7.9.5 — a session opening (or reloading) mid-day has never ticked
+    // through 00:00-to-now, so the ledger seeded above knows nothing about
+    // that stretch. Reconstruct it deterministically from the twin's own
+    // projection physics before the first live tick runs; see
+    // `dailyEnergyBootstrap.ts` for why this never touches a live engine.
+    bootstrapDailyEnergy(this.energyLedger, this.predictionContext(), this.clock.timeHours, this.battery.getState().storedKWh)
   }
 
   // -- Hot loop --------------------------------------------------------------
@@ -271,18 +339,55 @@ export class Simulation {
         bearing: (n.bearing - this.building.orientation + 360) % 360,
       }))
       this.solarPhysics.update(this.skin.getAllSurfaces(), this.pvArray.getModules(), localSun, localNeighbors)
+      // The simulated step is taken ONCE and shared by every lagged integrator
+      // below (thermal mass, HVAC plant, battery, daily ledger) so they all
+      // advance the same interval.
+      const simSeconds = this.energyStepSimSeconds()
+      // Building Thermal Response (Stage 7.9) — runs immediately after the
+      // façade and before the energy chain. `this.metrics` is the façade's most
+      // recently SETTLED state (skin.update() below computes this tick's, one
+      // env-tick from now — negligible at ENV_HZ); `facadeSolarGainKW` is the
+      // SAME authority the surface metrics and the AI Prediction layer read,
+      // never re-derived here.
+      const facadeAreaM2 = this.skin.getFacadeLayout().facadeArea
+      const solarGainKW = facadeSolarGainKW(
+        this.metrics.averageSolarExposure,
+        this.metrics.averageOpenness,
+        facadeAreaM2,
+      )
+      this.buildingThermal.update(
+        this.metrics.averageOpenness,
+        solarGainKW,
+        this.weather.temperature,
+        this.sun.irradiance,
+        simSeconds,
+      )
+      // Building Lighting Response (Stage 7.10) — independently consumes the
+      // SAME façade information Building Thermal does (`metrics.averageSolarExposure`
+      // is the effective-irradiance authority both read; neither depends on the
+      // other's output). Floor area is read from the BEMS's own authority
+      // (`grossFloorArea`, via its snapshot) rather than recomputed here.
+      this.buildingLighting.update(
+        this.metrics.averageSolarExposure,
+        this.metrics.averageOpenness,
+        this.buildingEnergy.getSnapshot().floorAreaM2,
+        this.clock.timeHours,
+        simSeconds,
+      )
       this.pvElectrical.update(this.pvArray.getModules(), this.solarPhysics)
       this.pvInverter.update(this.pvElectrical)
       // BEMS — runs immediately after the inverter and REUSES its AC output; the
       // energy balance is never derived from irradiance or DC power a second time.
-      // The simulated step is taken ONCE and shared, so the bus, the battery's
-      // state of charge and the daily ledger all integrate the same interval.
-      const simSeconds = this.energyStepSimSeconds()
+      // `solarCoolingLoadKW` / `lightingElectricalKW` are the ONE values it takes
+      // from the thermal / lighting engines — already electrical kW, added
+      // straight onto the HVAC / Lighting categories respectively.
       this.buildingEnergy.update(
         this.clock.timeHours,
         this.weather.temperature,
         this.pvInverter.getMetrics().currentACPowerKW,
         simSeconds,
+        this.buildingThermal.getState().coolingLoadKW,
+        this.buildingLighting.getState().lightingElectricalKW,
       )
       // The grid is the balancing component: it projects the settled bus and
       // adds no routing. The ledger integrates every flow into daily energy.
@@ -387,7 +492,7 @@ export class Simulation {
    * the twin's clock, its sun position and the forecast all refer to one site.
    */
   private syncClockToSiteNow(): void {
-    const siteNow = new Date(Date.now() + this.building.timezone * 3_600_000)
+    const siteNow = siteLocalNow(this.building.timezone)
     this.clock.date = new Date(siteNow.getUTCFullYear(), siteNow.getUTCMonth(), siteNow.getUTCDate())
     this.clock.timeHours = siteNow.getUTCHours() + siteNow.getUTCMinutes() / 60
     // The jump is not elapsed time: re-baseline the BEMS so it cannot integrate
@@ -492,8 +597,11 @@ export class Simulation {
   /**
    * The current AI prediction report. Cached inside the engine: an unchanged
    * twin returns the identical object, so polling this from the store's snapshot
-   * loop costs a key comparison rather than a projection. Never called from
-   * `tick()` — the simulation loop carries no prediction cost.
+   * loop costs a key comparison rather than a projection. Also reachable from
+   * `tick()` itself, via `engineeringContext.update(this)` (see the `prediction`
+   * field's own doc comment above) — the same caching applies either way, so
+   * the marginal cost stays a key comparison except on an actual cache-key
+   * rollover.
    */
   getPrediction(): PredictionReport {
     return this.prediction.getReport(this.predictionContext())
@@ -573,6 +681,8 @@ export class Simulation {
       // BEMS / BESS — cached objects mutated in place on the environmental
       // tier, so these are reference reads and cost nothing per poll.
       energy: this.buildingEnergy.getSnapshot(),
+      thermal: this.buildingThermal.getState(),
+      lighting: this.buildingLighting.getState(),
       battery: this.battery.getState(),
       grid: this.grid.getState(),
       daily: this.energyLedger.getTotals(),

@@ -54,6 +54,7 @@ import {
 } from '@/lib/kinematics'
 import { resolveTargetRotation, type FacadeControlMode } from './facadeControl'
 import { evaluatePbif, type PbifEvaluation } from '@/lib/pbif'
+import { SERVO_SETTLED_DEG } from '@/lib/embedded/servo'
 
 /** Blade follow-smoothing rate (s⁻¹) — same easing for every control source. */
 const TARGET_EASE_RATE = 2.4
@@ -77,10 +78,14 @@ export class AdaptiveSkinEngine {
   private program: Program = 'auto'
   private manualRotation = 90
   /**
-   * Weather Validation Mode façade control. `facadeControlMode` selects the SOURCE
-   * of the target rotation (Manual slider vs Sun-Tracking kinematics); the renderer
-   * is agnostic to it (see `facadeControl.ts`). `trackingIntent` is the geometry
-   * engine's intent, used only in sun-tracking. No PBIF.
+   * `facadeControlMode` selects the SOURCE of the target rotation — `'manual'`
+   * (slider), `'sun-tracking'` (pure kinematics) or `'pbif'` (decision layer);
+   * the renderer is agnostic to it (see `facadeControl.ts`). `trackingIntent`
+   * is the geometry engine's intent, used only in `'sun-tracking'`/`'pbif'`.
+   * Defaults to `'pbif'` — PBIF is the default façade-control source in every
+   * mode, including Weather Validation Mode (the constructor only overrides
+   * the separate render `program`, never this field). An operator can still
+   * switch to `'manual'`/`'sun-tracking'` via the Program control at any time.
    */
   private facadeControlMode: FacadeControlMode = 'pbif'
   private trackingIntent: Intent = 'shade'
@@ -116,8 +121,16 @@ export class AdaptiveSkinEngine {
 
   constructor(cfg: BuildingConfig) {
     this.rebuild(cfg)
-    // Weather Validation Mode boots straight into manual-only control.
-    if (WEATHER_VALIDATION_MODE) this.program = 'manual'
+    // Weather Validation Mode still boots the render `program` into manual
+    // (Auto/Storm/Privacy/Maintenance stay disabled — see validationMode.ts),
+    // but `facadeControlMode` — the field `resolveTargetRotation` actually
+    // switches on — is deliberately left at its class-field default, `'pbif'`:
+    // PBIF is the default façade-control source in every mode. `program` and
+    // `facadeControlMode` are independent switches; only the render program
+    // is forced here.
+    if (WEATHER_VALIDATION_MODE) {
+      this.program = 'manual'
+    }
   }
 
   /** Regenerate surfaces from geometry, preserving live blade motion by id. */
@@ -402,17 +415,34 @@ export class AdaptiveSkinEngine {
         }
 
         // ── Ease every frame toward the stored target ──────────────────────
+        // Stage 7.11: a settled blade (within the SAME "settled" threshold the
+        // Servo Status readout already uses) needs neither the easing step nor
+        // any of the angle-derived state recomputed — its `rotationAngle` this
+        // frame is bit-for-bit identical to last frame's, so `describeAngle` /
+        // `opennessFromAngle` / `shadingFromAngle` would recompute the exact
+        // same outputs. Skipping them is what lets `FacadeLayer`'s renderer
+        // detect "nothing changed" and skip its own per-panel matrix/colour
+        // work and GPU buffer upload for the same panel (see FacadeLayer.tsx).
+        // Snapping exactly to target once (rather than approaching forever)
+        // is what makes the skip stable rather than re-triggering every frame.
         const t = p.targetRotation
-        p.rotationAngle += (t - p.rotationAngle) * Math.min(1, step * TARGET_EASE_RATE)
+        const remaining = t - p.rotationAngle
+        if (Math.abs(remaining) > SERVO_SETTLED_DEG) {
+          p.rotationAngle += remaining * Math.min(1, step * TARGET_EASE_RATE)
+          p.state = describeAngle(p.rotationAngle)
+          p.openness = opennessFromAngle(p.rotationAngle)
+          p.shading = shadingFromAngle(p.rotationAngle)
+          p.openingPercentage = Math.round(p.openness * 100)
+        } else if (p.rotationAngle !== t) {
+          p.rotationAngle = t
+          p.state = describeAngle(p.rotationAngle)
+          p.openness = opennessFromAngle(p.rotationAngle)
+          p.shading = shadingFromAngle(p.rotationAngle)
+          p.openingPercentage = Math.round(p.openness * 100)
+        }
         p.rotationVelocity = 0
         p.movementState = 'idle'
         p.movementDuration = 0
-        p.state = describeAngle(p.rotationAngle)
-
-        // Derived optical state (angle-dependent → every frame).
-        p.openness = opennessFromAngle(p.rotationAngle)
-        p.shading = shadingFromAngle(p.rotationAngle)
-        p.openingPercentage = Math.round(p.openness * 100)
         p.powerConsumption = p.healthStatus === 'offline' ? 0 : 0.35
       }
     }

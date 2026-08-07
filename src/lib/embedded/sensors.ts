@@ -20,6 +20,8 @@ import type { FacadePanel, WeatherState } from '@/lib/engine/types'
 import { clamp } from '@/lib/engine/math'
 import { virtualDHT22 } from '@/lib/vec/sensorLayer'
 import type { Simulation } from '@/lib/engine/simulation'
+import { computeLdrChain } from '@/lib/engine/ldrPhysics'
+import { RAIN_LEVEL } from '@/lib/pbif/thresholds'
 import {
   ADC_MAX,
   ANEMOMETER_HZ_PER_KMH,
@@ -156,13 +158,12 @@ export function ldrLowerSignal(sim: Simulation, panel: FacadePanel): SensorSigna
   const baseEffIrr = sim.solarPhysics.getModuleEffectiveIrradiance(panel.id)
   const selfShade = 1 - (1 - panel.openness) * LDR_LOWER_SELF_SHADE_MAX
   
-  // Apply self-shading directly on the unified effective irradiance
+  // Apply self-shading directly on the unified effective irradiance, then
+  // run the SAME shared GL5528 chain VirtualSensorEngine uses (ldrPhysics.ts)
+  // — no local copy of the resistance/divider/ADC formulas.
   const effIrr = baseEffIrr * selfShade
-  const lux = Math.round(effIrr * LUX_PER_WM2)
-  const res = lux > 0 ? (500 / lux) : 10000
-  const volt = VCC * (10 / (res + 10))
-  const adc = Math.round(clamp(volt / VCC) * ADC_MAX)
-  
+  const { lux, resistanceOhms: res, voltage: volt, adc } = computeLdrChain(effIrr)
+
   // (We don't strictly have a filtered ADC in virtualSensor for the shaded lower sensor yet,
   // so we present the raw ADC as the filtered one for explainability here, matching previous logic)
   const fadc = adc
@@ -205,11 +206,11 @@ export function windSignal(weather: WeatherState): SensorSignal {
   }
 }
 
-/** Qualitative rain-intensity label matching PBIF's own Situation Assessment bands. */
+/** Qualitative rain-intensity label — reads the SAME `RAIN_LEVEL` bands PBIF's Situation Assessment classifies against, never a re-hardcoded copy. */
 function rainLabel(intensity: number): string {
-  if (intensity >= 0.65) return 'Heavy Rain'
-  if (intensity >= 0.35) return 'Moderate Rain'
-  if (intensity >= 0.05) return 'Light Rain'
+  if (intensity >= RAIN_LEVEL.HEAVY) return 'Heavy Rain'
+  if (intensity >= RAIN_LEVEL.MODERATE) return 'Moderate Rain'
+  if (intensity >= RAIN_LEVEL.LIGHT) return 'Light Rain'
   return 'No Rain'
 }
 

@@ -47,20 +47,34 @@ export const TEMPERATURE_C = {
 } as const
 
 /**
- * Predefined **wind-safe** blade orientation used by `SAFE_MODE`, degrees.
+ * Predefined **wind-safe** blade orientation, degrees. 90° = edge-on /
+ * feathered: the flat fin presents its thin edge (minimum projected area) to a
+ * façade-normal wind, minimising aerodynamic torque on the actuator and the
+ * structure — the standard high-wind protection posture for louvre systems
+ * (cf. feathering a wind-turbine blade). Configurable.
  *
- * 90° = edge-on / feathered: the flat fin presents its thin edge (minimum
- * projected area) to a façade-normal wind, minimising aerodynamic torque on the
- * actuator and the structure — the standard high-wind protection posture for
- * louvre systems (cf. feathering a wind-turbine blade). Configurable.
+ * NOT YET WIRED INTO `SAFE_MODE`'s arithmetic — `trackingPolicy.ts`'s
+ * `resolveTarget()` closes the blade to a flat 0° for `SAFE_MODE` today. This
+ * mirrors the `RAIN_SAFE_ANGLE`/`WEATHER_PROTECTION` gap that Stage 7.10.2
+ * closed for rain (the two hazards were previously conflated into the same
+ * 0° "CLOSED" branch); wiring wind protection to this constant the same way
+ * is a candidate follow-up, not yet done, so this constant is currently
+ * display/documentation-only.
  */
 export const WIND_SAFE_ANGLE = 90
 
 /**
- * Predefined **rain-safe** blade orientation used by `WEATHER_PROTECTION`,
- * degrees. 135° = an outward tilt that sheds water off the glazing rather than
- * tracking the sun. Mirrors the façade's established rain-shedding posture and
- * remains configurable.
+ * The ONE authoritative **rain-safe** blade orientation, degrees — read by
+ * BOTH `trackingPolicy.ts`'s `WEATHER_PROTECTION` case (the PBIF/validation
+ * control path) and `panelStates.ts`'s `STATE_ANGLE[RAIN_PROTECTION]` (the
+ * other, non-validation control path), so the twin has exactly one rain-safe
+ * angle rather than two definitions that must be kept in sync by convention
+ * (Stage 7.10.2 — before this, `trackingPolicy.ts` silently ignored this
+ * constant and closed to 0° instead; see `ENGINEERING_DESIGN_REVIEW.md` §5/§11).
+ *
+ * 135° = an outward tilt that sheds water off the glazing rather than
+ * tracking the sun. Mirrors the façade's established rain-shedding posture
+ * and remains configurable — change it here and both control paths follow.
  */
 export const RAIN_SAFE_ANGLE = 135
 

@@ -1,16 +1,19 @@
 import type { BuildingSurface } from './types'
 import type { SolarPhysicsEngine } from './solarPhysics'
+import { computeLdrChain } from './ldrPhysics'
 
 /**
  * Virtual Sensor Engine
- * 
+ *
  * Simulates the physical hardware sensing chain from Effective Irradiance down to a
  * filtered 12-bit ADC reading. This decouples the PBIF logic from the environmental
  * physics models.
- * 
- * Electrical Model:
- *  - LDR resistance decreases non-linearly with light (R = 500 / lux)
- *  - Voltage Divider with a 10 kΩ pull-down resistor to 3.3V Vcc
+ *
+ * Electrical Model (the GL5528-style LDR power law, `src/lib/engine/ldrPhysics.ts`
+ * — the single authority every consumer, including the Virtual Embedded System's
+ * `embedded/sensors.ts`, computes this chain through):
+ *  - LDR resistance falls non-linearly with light: R = R10 * (10 / lux)^gamma
+ *  - Voltage divider: V = VCC * R_FIXED / (R_FIXED + R_LDR)
  *  - 12-bit ADC (0 - 4095)
  */
 export class VirtualSensorEngine {
@@ -40,11 +43,12 @@ export class VirtualSensorEngine {
 
     // 1. Process Global Reference Sensor
     const globalGHI = solarPhysics.getGlobalRawGHI() * solarPhysics.getGlobalCloudAttenuation()
-    this.globalLux = Math.round(globalGHI * 120)
-    this.globalResistance = this.globalLux > 0 ? (500 / this.globalLux) : 10000
-    this.globalVoltage = 3.3 * (10 / (this.globalResistance + 10))
-    this.globalADC = Math.round((10 / (this.globalResistance + 10)) * 4095)
-    
+    const globalChain = computeLdrChain(globalGHI)
+    this.globalLux = globalChain.lux
+    this.globalResistance = globalChain.resistanceOhms
+    this.globalVoltage = globalChain.voltage
+    this.globalADC = globalChain.adc
+
     const prevGlobalF = this.globalFilteredADC || this.globalADC
     this.globalFilteredADC = prevGlobalF + (this.globalADC - prevGlobalF) * alpha
 
@@ -52,19 +56,15 @@ export class VirtualSensorEngine {
     for (const s of surfaces) {
       for (const p of s.panels) {
         const irradiance = solarPhysics.getModuleEffectiveIrradiance(p.id)
+        const chain = computeLdrChain(irradiance)
+
+        this.moduleLux.set(p.id, chain.lux)
+        this.moduleResistance.set(p.id, chain.resistanceOhms)
+        this.moduleVoltage.set(p.id, chain.voltage)
+        this.moduleADC.set(p.id, chain.adc)
         
-        const lux = Math.round(irradiance * 120)
-        const res = lux > 0 ? (500 / lux) : 10000
-        const vOut = 3.3 * (10 / (res + 10))
-        const adc = Math.round((10 / (res + 10)) * 4095)
-        
-        this.moduleLux.set(p.id, lux)
-        this.moduleResistance.set(p.id, res)
-        this.moduleVoltage.set(p.id, vOut)
-        this.moduleADC.set(p.id, adc)
-        
-        const prevF = this.moduleFilteredADC.get(p.id) ?? adc
-        const filtered = prevF + (adc - prevF) * alpha
+        const prevF = this.moduleFilteredADC.get(p.id) ?? chain.adc
+        const filtered = prevF + (chain.adc - prevF) * alpha
         this.moduleFilteredADC.set(p.id, filtered)
       }
     }

@@ -29,9 +29,11 @@ SOLIS AI is a comprehensive digital twin for an adaptive façade. It integrates 
 - **LiveForecastEngine**: Fetches, caches and converts real hourly forecast data into a `WeatherKeyframe[]` timeline, which it supplies to the WeatherScenarioEngine. It never writes weather itself.
 - **ForecastProvider**: The interface the LiveForecastEngine fetches through (`OpenMeteoProvider` today). Swapping services touches nothing else.
 - **SolarPhysicsEngine**: Computes astronomical sun position, clear-sky irradiance, and incident vectors.
-- **VirtualSensorEngine**: Models physical LDR components, electrical noise, and realistic sensor outputs based on raw irradiance.
+- **VirtualSensorEngine**: Models physical LDR components and realistic sensor outputs based on raw irradiance, through the shared GL5528 chain in `src/lib/engine/ldrPhysics.ts`. Deterministic by design — the only temporal behaviour is a first-order low-pass smoothing filter (τ = 0.5 s); no electrical noise or thermal drift is modelled (see Documentation Consistency Rules, §12, on keeping this line honest as the engine evolves).
 - **PBIF**: The Predictive Building Intelligence Framework; evaluates physical state against building objectives.
 - **AdaptiveSkinEngine**: Solves physical kinematics for the façade panels and manages structural panel state.
+- **BuildingThermalEngine**: The bridge between the Adaptive Façade and the Building Energy Management System. Converts the façade's solar gain (`facadeSolarGainKW`, owned by `metrics.ts` — never re-derived) into envelope heat gain, a lagged indoor heat gain through a first-order thermal-mass model, and a solar-induced cooling load already expressed in electrical kW (via the cooling plant's COP). It owns the thermal chain only — occupancy, equipment, elevators and services demand remain entirely `BuildingEnergyEngine`'s; lighting is `BuildingLightingEngine`'s (below).
+- **BuildingLightingEngine**: The second Building Physics Layer subsystem (Stage 7.10), sibling to `BuildingThermalEngine`. Converts outdoor daylight — via the façade's effective irradiance (the SAME quantity `facadeSolarGainKW` consumes) and openness — into indoor illuminance and a daylight-harvesting artificial lighting demand, already expressed in electrical kW. It owns the daylight-responsive lighting share only; the non-daylight-responsive baseline (egress/corridor/back-of-house) remains `BuildingEnergyEngine`'s own occupancy-driven `lighting` category. Independently consumes façade information — neither this nor `BuildingThermalEngine` depends on the other.
 - **PVElectricalEngine**: Maps solar irradiance into DC electrical output array string currents.
 - **PVInverterEngine**: Models power electronics to convert DC into usable AC power with clipping.
 - **BuildingEnergyEngine**: Simulates dynamic building load and thermal demand.
@@ -63,6 +65,10 @@ PBIF
 Servo
 ↓
 Adaptive Façade
+↓
+Building Thermal Response
+↓
+Building Lighting Response
 ↓
 PV System
 ↓
@@ -220,6 +226,8 @@ Rules:
 - Grid
 - Weather Scenario Engine
 - Real-Time Forecast (Open-Meteo)
+- Building Thermal Response Engine (Stage 7.9)
+- Building Lighting Response Engine (Stage 7.10)
 - AI Prediction Layer (Stage 8.1)
 - AI What-If Analysis (Stage 8.2)
 - AI Fault Detection & Diagnosis (Stage 8.5)
@@ -237,7 +245,6 @@ Rules:
 
 - Energy Analytics
 - Financial Analytics — also unblocks the What-If layer's Predicted Energy Cost metric, which currently reports "not modelled"
-- **Façade → BEMS thermal coupling.** The skin's solar gain (`metrics.ts`, thermal) and the BEMS's HVAC demand (`buildingEnergy.ts`, electrical) are currently independent. Until they are coupled, a locked-façade study correctly shows a large thermal change and no electrical one — see §11
 - Stage 8.3+: prediction accuracy tracking against what actually happened; longer horizons
 
 ## 11. AI Layer (Stages 8.1–8.5)
@@ -249,15 +256,15 @@ An engineering **advisor**, in `src/lib/prediction/`. Stage 8.1 projects the twi
 ### 11.1 Shared rules
 
 - **`PredictionContext` is pure data.** No engine, method, setter or mutable array reaches it; `Simulation.predictionContext()` resolves every value up front. This is what makes the observer guarantee structural rather than conventional, AND what makes a What-If sandbox an ordinary object spread. Keep it that way — never add an engine reference back.
-- **Never called from `tick()`.** The prediction is pulled as a cached report from the ~8 Hz poll; the What-If runs only from its Run Analysis button. The simulation loop carries no AI cost.
-- **It re-uses the engines' physics; it never re-implements it.** The projection composes pure functions the owning engines also call: `computeSun`, `sampleTimeline`, `planeIrradiance` (solarPhysics), `moduleDcPowerW` (pvElectrical), `convertDcToAc` (pvInverter), `buildingDemandKW` (buildingEnergy), `settleBus`, `planStorage` (battery), `facadeSolarGainKW` / `facadeDaylightPercent` / `normalisedExposure` (metrics). If the AI needs physics that only exists inside an engine's method, **extract a pure function that engine then calls** — do not copy the arithmetic.
+- **Bounded, cached cost — reachable from `tick()`, but never a per-tick projection.** The prediction is pulled as a cached report from the ~8 Hz poll, and is also reachable from `tick()`'s `resolve` block via `engineeringContext.update()` → `buildAIPrediction()` → `getPrediction()` (`src/lib/prediction/predictionEngine.ts`'s header documents the full chain). Two layers of caching — `EngineeringContextBuilder`'s own coarse key, then `PredictionEngine`'s `TIME_BUCKET_HOURS`-quantised key — mean this costs a key comparison on almost every call and a full projection only on an actual rollover, so the simulation loop's marginal AI cost stays bounded. The What-If runs only from its Run Analysis button, with no `tick()` or poll entry point at all.
+- **It re-uses the engines' physics; it never re-implements it.** The projection composes pure functions the owning engines also call: `computeSun`, `sampleTimeline`, `planeIrradiance` (solarPhysics), `moduleDcPowerW` (pvElectrical), `convertDcToAc` (pvInverter), `equilibriumThermalState` (buildingThermal), `buildingDemandKW` (buildingEnergy), `settleBus`, `planStorage` (battery), `facadeSolarGainKW` / `facadeDaylightPercent` / `normalisedExposure` (metrics). If the AI needs physics that only exists inside an engine's method, **extract a pure function that engine then calls** — do not copy the arithmetic.
 - **Nothing is fabricated.** Every statement carries its evidence and source. A claim the projection cannot support is not emitted; a causal claim is conditional on the data supporting it; a metric the twin cannot evaluate is listed as unavailable **with its reason**, never as a zero or an invented number.
 - **No timeline means no output.** Forecast Mode with an empty cache → the prediction reports `Holding` with zero horizons, and `WhatIfEngine.run()` returns null.
 - **Confidence is `horizon × freshness × stability`** (`confidence.ts`) — never random. Freshness reuses the Live Forecast Engine's own age thresholds so the two readouts cannot contradict each other.
 
 ### 11.2 Prediction (8.1)
 
-- Blade rotation is deliberately **not** projected — that would mean predicting PBIF. The projection holds the façade at its current measured mean openness. This and the other two simplifications (no forward occlusion ray-cast; HVAC lag at equilibrium) are listed in the panel, never hidden.
+- Blade rotation is deliberately **not** projected — that would mean predicting PBIF. The projection holds the façade at its current measured mean openness. This and the other three simplifications (no forward occlusion ray-cast; HVAC lag at equilibrium; façade thermal-mass lag at equilibrium — Stage 7.9) are listed in the panel, never hidden.
 - The cache key in `predictionEngine.ts` must contain everything a projection depends on. It includes façade openness *separately from the clock bucket*, because the blades keep moving while the clock barely advances.
 
 ### 11.3 What-If (8.2)
@@ -277,6 +284,17 @@ An engineering **advisor**, in `src/lib/prediction/`. Stage 8.1 projects the twi
 
 ### 11.5 Known modelling boundaries the AI reports honestly
 
-- **Façade thermal ↔ HVAC electrical are not coupled.** A locked-façade study moves solar gain and daylight, and moves projected HVAC electrical demand by zero. Correct, and stated in the recommendation's `limitation`. Do not invent the coupling to make the output look richer.
+- **Façade thermal ↔ HVAC electrical ARE coupled (Stage 7.9), through `BuildingThermalEngine`.** A locked-façade study now moves solar gain, daylight AND projected HVAC electrical demand together — envelope transmission, thermal-mass lag and a cooling-plant COP carry one into the other, not a hardcoded percentage. What remains an honestly-stated assumption is that the AI layer reads this chain at equilibrium (`equilibriumThermalState`) rather than integrating the lag hour-by-hour, and converts thermal to electrical through a fixed assumed COP — both stated in the recommendation's `limitation`. Do not invent higher precision than that.
 - **`FacadePanel.solarExposure` is normalised irradiance (`irradiance / 1000`), not the geometric cosine.** Anything feeding the façade metrics must use `normalisedExposure()`, or the result is blind to cloud. Stage 8.1 got this wrong and the What-If layer caught it.
 - **Removing the grid changes no dispatch.** The utility is the balancing component, so islanding reclassifies the residual the bus already settled — it never re-settles it.
+
+## 12. Documentation Consistency Rules
+
+Stage 7.10.2 exists because six separate contradictions accumulated between the runtime implementation, this file, the static Engineering Knowledge Base (`src/lib/knowledge/`), the implementation docs (`docs/ai/implementation/`) and the AI prompt context (`src/lib/assistant/projectContext.ts`) — each individually a small drift, collectively enough that the Engineering Assistant could confidently state something false about the twin's own current behaviour. These rules are the maintenance contract that keeps it from recurring. They do not enforce themselves — there is no linter for "is this comment still true" — so treat them as a checklist for the *same change* that touches an engine, not a follow-up task:
+
+- **Engineering equations must have a single implementation source.** If a formula is displayed in the UI, described in a knowledge-base `keyEquations` entry, or explained in an implementation doc, it must be the SAME formula the engine actually executes — ideally by the doc/UI reading a value the engine already computed, never by retyping the arithmetic a second time. `src/lib/engine/ldrPhysics.ts` (Stage 7.10.1) is the reference example: one shared module, every consumer (engine, explainability layer, knowledge base) reads or cites it.
+- **Engineering constants must be defined once and reused everywhere.** A threshold, angle, density or coefficient gets ONE named constant in its owning module; every other file imports it. A second file that happens to hardcode the same number today is a future contradiction waiting for one file to change without the other — `RAIN_SAFE_ANGLE` (Stage 7.10.2) and `RAIN_LEVEL` (Stage 7.10.2) are the reference examples of catching and closing exactly that gap.
+- **AI knowledge must describe the current implementation, not historical or aspirational behaviour.** `src/lib/knowledge/subsystems.ts`, `projectContext.ts` and `docs/ai/implementation/*.md` are read by the Engineering Assistant as ground truth; a stale or aspirational entry is not a harmless inaccuracy, it is something Gemini can be instructed to defend over its own better judgement (§11.1's "never contradict the supplied context" rule makes this worse, not better, when the context is wrong). When in doubt, describe what the code does today, cite the file, and mark anything genuinely aspirational as a `futureExtensions` entry, never as `howItWorks`/`keyEquations`.
+- **Architecture diagrams and pipeline descriptions must be updated whenever subsystem responsibilities change.** §3's pipeline diagram, `projectContext.ts`'s `PROJECT_OVERVIEW` simulation-flow line, and `docs/ai/implementation/*.md`'s own diagrams are three separate copies of the same ordering — a new stage that inserts a subsystem into the pipeline (as Stage 7.9/7.10 did with Building Thermal/Lighting) must update all three in the same change, not just the engine that was actually added.
+- **When an engineering subsystem changes, its implementation documentation and AI knowledge update in the same change — not as a follow-up.** Concretely: touching an engine under `src/lib/engine/`, `src/lib/pbif/` or `src/lib/prediction/` means checking whether `src/lib/knowledge/subsystems.ts`'s matching entry, `src/lib/knowledge/relationships.ts`'s dependency edges, the relevant `docs/ai/implementation/*.md` file, and this file's own §2/§3 description still describe what the change just made true. A comment that says "this is stale, fix `subsystems.ts`" (as several did before Stage 7.10.2) is a debt marker, not a fix — closing the loop in the same change is what these rules ask for instead.
+- **A comment describing behaviour is a claim, not decoration.** "Never called from X", "models Y", "N W/m²" are testable statements. Before writing one, check it against the code it describes; before trusting one you didn't just write, treat it as a claim to verify, not a fact to cite — Stage 7.10.2's six issues were all found exactly this way, by tracing a comment's claim back to the code and finding it no longer matched.

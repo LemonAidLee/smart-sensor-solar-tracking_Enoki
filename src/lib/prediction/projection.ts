@@ -6,7 +6,8 @@
  * order the Simulation calls them:
  *
  *   Weather Timeline → computeSun → planeIrradiance → moduleDcPowerW
- *     → convertDcToAc → buildingDemandKW → settleBus → planStorage → grid
+ *     → convertDcToAc → equilibriumThermalState → buildingDemandKW
+ *     → settleBus → planStorage → grid
  *
  * Every one of those is imported from the engine that owns it. There is no
  * second solar model, no second PV curve, no second load profile and no second
@@ -27,8 +28,13 @@
  *    stops there.
  * 3. **The HVAC thermal lag uses its equilibrium value.** The fabric's response
  *    time is 15 simulated minutes against a 1–12 hour horizon.
+ * 4. **The façade thermal-mass lag (Stage 7.9) likewise uses its equilibrium
+ *    value**, via `equilibriumThermalState` — the SAME reasoning as #3: its
+ *    20-simulated-minute time constant is negligible against a 1–12 hour
+ *    horizon, so the projection reads the settled cooling load rather than
+ *    integrating the lag hour-by-hour.
  *
- * All three are surfaced to the operator as assumptions, never hidden.
+ * All four are surfaced to the operator as assumptions, never hidden.
  */
 
 import { computeSun } from '../engine/solar'
@@ -36,6 +42,7 @@ import { attenuatedGHI, planeIrradiance } from '../engine/solarPhysics'
 import { moduleDcPowerW, PV_MODULE_RATED_POWER_W } from '../engine/pvElectrical'
 import { convertDcToAc } from '../engine/pvInverter'
 import { buildingDemandKW, hvacDemandFactor, settleBus, type EnergyBusState } from '../engine/buildingEnergy'
+import { equilibriumThermalState } from '../engine/buildingThermal'
 import { planStorage } from '../engine/battery'
 import { facadeDaylightPercent, facadeSolarGainKW, normalisedExposure } from '../engine/metrics'
 import { sampleTimeline, type WeatherDrivers, type WeatherKeyframe } from '../engine/weatherScenario'
@@ -51,8 +58,13 @@ const ASSUMED_VISIBILITY = 1
 
 const MS_PER_HOUR = 3_600_000
 
-/** Reusable bus buffer — `settleBus` writes into a caller-owned object. */
-function emptyBus(): EnergyBusState {
+/**
+ * Reusable bus buffer — `settleBus` writes into a caller-owned object.
+ * Exported so other callers walking `projectAt` over a custom horizon (the
+ * Daily Energy bootstrap, Stage 7.9.5) share this one shape rather than
+ * hand-rolling a second zeroed `EnergyBusState` literal.
+ */
+export function emptyBus(): EnergyBusState {
   return {
     pvGenerationKW: 0,
     buildingLoadKW: 0,
@@ -243,8 +255,17 @@ export function projectAt(
     1000
   const inverter = convertDcToAc(pvDcKW, ctx.inverterRatedKW, ctx.inverterBaseEfficiency)
 
-  // ── 4. Building demand ───────────────────────────────────────────────────
-  const demand = buildingDemandKW(ctx.floorAreaM2, atHours, hvacDemandFactor(drivers.temperature))
+  // ── 4. Building Thermal Response, then building demand ───────────────────
+  // Reuses the SAME equilibrium chain the live `BuildingThermalEngine` calls
+  // every tick (see header note 4) — the live engine additionally integrates
+  // the thermal-mass lag, which this horizon is long enough to ignore.
+  const thermal = equilibriumThermalState(params.facadeOpenness, solarGainKW, drivers.temperature, facadeIrradiance)
+  const demand = buildingDemandKW(
+    ctx.floorAreaM2,
+    atHours,
+    hvacDemandFactor(drivers.temperature),
+    thermal.coolingLoadKW,
+  )
 
   // ── 5. Storage, then the bus ─────────────────────────────────────────────
   // The battery is offered the PV-only imbalance, exactly as the BEMS offers it.

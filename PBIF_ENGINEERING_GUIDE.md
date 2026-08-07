@@ -462,8 +462,8 @@ overridden by a lower one.
 |---|---|---|
 | `NORMAL_TRACKING` | Follow the sun normally for maximum solar performance. | Solar Availability / Thermal Demand |
 | `ECONOMY_TRACKING` | Follow the sun, but only re-command when the target moves more than the dead-band (`ECONOMY_DEADBAND_DEG`), reducing actuator wear. | Structural Safety / Solar Availability / Thermal Demand |
-| `WEATHER_PROTECTION` | Preserve the façade in a configurable rain-safe orientation (`RAIN_SAFE_ANGLE`) rather than tracking the sun. | Weather Protection |
-| `SAFE_MODE` | Highest priority. Move to the configurable wind-safe / feathered orientation (`WIND_SAFE_ANGLE`) and suspend tracking. | Structural Safety |
+| `WEATHER_PROTECTION` | Preserve the façade in a configurable rain-safe orientation (`RAIN_SAFE_ANGLE`, 135°) rather than tracking the sun. | Weather Protection |
+| `SAFE_MODE` | Highest priority. Suspend tracking and close flat (0°). `WIND_SAFE_ANGLE` (90°, the configurable wind-safe / feathered orientation) is defined but not yet wired into `trackingPolicy.ts`'s arithmetic — a documented, not-yet-implemented follow-up (Stage 7.10.2 wired the analogous `RAIN_SAFE_ANGLE` for `WEATHER_PROTECTION`; `SAFE_MODE` still closes flat). | Structural Safety |
 
 ### 15.7 Decision Priority (rule table)
 
@@ -603,6 +603,7 @@ Every stage is a **named, exported constant or pure function** in `src/lib/embed
 | `LUX_PER_WM2` (eta) | Illuminance | Daylight luminous efficacy | 120 lux/W·m² |
 | `LDR_R10_OHMS` (A) | LDR Resistance | Resistance at 10 lux | 10,000 Ω |
 | `LDR_GAMMA` (B) | LDR Resistance | Datasheet log-log slope | 0.7 |
+| `LDR_DARK_RESISTANCE_OHMS` | LDR Resistance | Dark-condition ceiling the power law is clamped against as lux→0 | 1,000,000 Ω |
 | `LDR_FIXED_RESISTOR_OHMS` | Voltage Divider | Fixed divider resistor | 10,000 Ω |
 | `VCC` | Voltage Divider / ADC | Logic supply (approx. VREF) | 3.3 V |
 | `ADC_MAX` | ADC Conversion | 12-bit ADC span (reused from `FW.ADC_MAX`) | 4095 |
@@ -633,7 +634,7 @@ All live in `src/lib/embedded/constants.ts` — the single place any of these ma
 4. **Equation adopted**: `R = A x L^-B`, parameterised as `R10 x (10/L)^gamma` where `R10` = resistance at 10 lux and `gamma` = the datasheet's log-log slope.
 5. **Assumptions made**: `R10 = 10,000 Ω`, `gamma = 0.7` — typical published GL5528 values, characterised over a datasheet's usual 10-100 lux range, extrapolated here to full-daylight illuminance (tens of thousands of lux).
 6. **Why this approximation is appropriate for the Digital Twin**: No CdS-cell datasheet characterises full outdoor daylight illuminance; the power law is the correct functional form even outside its calibrated range, and this extrapolation is documented, not hidden, so the reader understands its limits.
-7. **Where documented**: `src/lib/embedded/constants.ts` (`LDR_R10_OHMS`, `LDR_GAMMA`), `src/lib/embedded/sensors.ts` (`ldrDivider`), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
+7. **Where documented**: `src/lib/embedded/constants.ts` (`LDR_R10_OHMS`, `LDR_GAMMA`), `src/lib/engine/ldrPhysics.ts` (`luxToLdrResistanceOhms`, the arithmetic), `src/lib/embedded/sensors.ts` (`ldrPipelineSteps`, the display), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
 
 #### Stage: Voltage Divider Output (V = VCC x R_FIXED / (R_FIXED + R_LDR))
 
@@ -643,7 +644,7 @@ All live in `src/lib/embedded/constants.ts` — the single place any of these ma
 4. **Equation adopted**: `V = VCC x R_FIXED / (R_FIXED + R_LDR)` — the LDR is wired as the VCC-side leg, so brighter light (lower `R_LDR`) yields a higher divider output.
 5. **Assumptions made**: `VCC = 3.3 V`, `R_FIXED = 10,000 Ω`; no load current drawn by the ADC input (a standard, negligible-load assumption for a high-impedance SAR ADC input).
 6. **Why this approximation is appropriate for the Digital Twin**: This is the exact circuit already used by the existing virtual LDR model — this stage only exposes its calculation, per this task's explicit instruction not to alter the circuit implementation.
-7. **Where documented**: `src/lib/embedded/sensors.ts` (`ldrDivider`), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
+7. **Where documented**: `src/lib/engine/ldrPhysics.ts` (`ldrResistanceToVoltage`), `src/lib/embedded/sensors.ts` (`ldrPipelineSteps`), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
 
 #### Stage: ADC Conversion (ADC = (V / VREF) x 4095)
 
@@ -653,7 +654,7 @@ All live in `src/lib/embedded/constants.ts` — the single place any of these ma
 4. **Equation adopted**: `ADC = (V / VREF) x 4095` — a 12-bit ADC (0-4095 counts).
 5. **Assumptions made**: `VREF is approximately VCC = 3.3 V` (default attenuation, no external reference or calibration curve applied).
 6. **Why this approximation is appropriate for the Digital Twin**: The ESP32-S3's ADC is genuinely close to linear over this range at default attenuation for this demonstration's purposes; modelling its full non-linearity/calibration curve would add complexity without changing the pipeline's educational purpose — showing that firmware reads only an integer.
-7. **Where documented**: `src/lib/embedded/constants.ts` (`ADC_MAX`, reused from `src/lib/vec/types.ts`'s `FW.ADC_MAX`), `src/lib/embedded/sensors.ts` (`ldrDivider`), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
+7. **Where documented**: `src/lib/embedded/constants.ts` (`ADC_MAX`, reused from `src/lib/vec/types.ts`'s `FW.ADC_MAX`), `src/lib/engine/ldrPhysics.ts` (`voltageToAdcCounts`), `src/lib/embedded/sensors.ts` (`ldrPipelineSteps`), `PBIF_ENGINEERING_GUIDE.md` (§16.5).
 
 ### 16.6 Validation: Single Source of Truth for GHI
 

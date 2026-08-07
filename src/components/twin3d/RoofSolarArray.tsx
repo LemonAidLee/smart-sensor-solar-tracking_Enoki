@@ -152,26 +152,41 @@ export function RoofSolarArray() {
     meshRef.current.instanceMatrix.needsUpdate = true
   }, [matrices, count])
 
+  // Stage 7.11 — irradiance only actually changes on the ~20 Hz environmental
+  // tier (see `solarPhysics.ts`), but this ran every render frame regardless,
+  // re-writing and re-uploading all 189 instance colours for no visual change
+  // most frames. Float64 so it compares exactly against `irradiance` (a JS
+  // double) — see `FacadeLayer.tsx`'s identical note on Float32 truncation.
+  // A `useRef`, not `useMemo` — mutated every frame inside `useFrame`.
+  const irradianceCache = useRef(new Float64Array(0))
+  useLayoutEffect(() => {
+    irradianceCache.current = new Float64Array(count).fill(NaN)
+  }, [count])
+
   // Update instance colors dynamically based on irradiance
   useFrame(() => {
     if (!meshRef.current) return
     const sim = getSimulation()
     const modules = sim.pvArray.getModules()
-    
+    let dirty = false
+
     for (let i = 0; i < count; i++) {
       const pv = modules[i]
       if (!pv) continue
-      
+
       const irradiance = sim.solarPhysics.getModuleEffectiveIrradiance(pv.id)
-      
+      if (irradiance === irradianceCache.current[i]) continue
+      irradianceCache.current[i] = irradiance
+      dirty = true
+
       // Base tint based on irradiance (0-1200 W/m2 mapped to 0.4 - 1.0 brightness)
       const factor = 0.4 + 0.6 * Math.min(irradiance / 1200, 1.0)
       color.setRGB(factor, factor, factor)
-      
+
       meshRef.current.setColorAt(i, color)
     }
-    
-    if (meshRef.current.instanceColor) {
+
+    if (dirty && meshRef.current.instanceColor) {
       meshRef.current.instanceColor.needsUpdate = true
     }
   })

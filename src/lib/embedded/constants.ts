@@ -44,6 +44,18 @@ export const LDR_R10_OHMS = 10_000
 export const LDR_GAMMA = 0.7
 export const LDR_FIXED_RESISTOR_OHMS = 10_000
 
+/**
+ * Dark-condition resistance ceiling, Ω. The power law `R10 · (10/lux)^γ`
+ * diverges to infinity as illuminance approaches zero, which no physical
+ * component does — GL5528-class CdS cells are commonly datasheet-rated with
+ * a finite (if large) dark resistance, typically in the hundreds-of-kΩ to
+ * low-MΩ range. 1 MΩ is used here as that representative ceiling: it is the
+ * one place the power law is clamped, applied identically by every consumer
+ * of `src/lib/engine/ldrPhysics.ts` rather than each guarding lux<=0 with its
+ * own fallback literal.
+ */
+export const LDR_DARK_RESISTANCE_OHMS = 1_000_000
+
 /** Fraction of light the lower LDR loses to the blade's own shadow at fully closed. */
 export const LDR_LOWER_SELF_SHADE_MAX = 0.35
 

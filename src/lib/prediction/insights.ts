@@ -297,7 +297,10 @@ export function buildPredictions(
     'cooling', 'building', 'Cooling Demand',
     `Cooling demand is expected to ${verb(coolTrend, 'rise', 'fall')} to ${kw(p.coolingLoadKW)} ${at}.`,
     coolTrend, p.coolingLoadKW, baseline.coolingLoadKW, 'kW',
-    `HVAC responds to ${degC(p.temperature)} outdoor dry-bulb and ${pct(p.occupancy)} occupancy.`,
+    // Stage 7.9: HVAC now has two drivers, base plant response and the façade's
+    // own solar-induced share — cited together so the evidence matches what
+    // `equilibriumThermalState` actually adds to the number above.
+    `HVAC responds to ${degC(p.temperature)} outdoor dry-bulb and ${pct(p.occupancy)} occupancy, plus ${kw(p.facadeSolarGainKW)} of façade solar gain at ${Math.round(p.facadeOpenness * 100)}% openness.`,
     SOURCE.building,
   )
 

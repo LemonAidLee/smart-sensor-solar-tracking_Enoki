@@ -64,11 +64,15 @@ const anyNonZero = (walk: readonly TwinProjection[], pick: (p: TwinProjection) =
  * The metrics Stage 8.2 compares, in the order the panel presents them.
  *
  * Note the two distinct cooling quantities. `coolingLoadKW` is the BEMS's
- * **electrical** HVAC demand, which responds to outdoor dry-bulb and occupancy.
- * `facadeSolarGainKW` is the **thermal** load the skin admits to the glazing.
- * They are different quantities from different engines and are never summed —
- * conflating them would double-count and would let a façade study appear to move
- * an electrical demand it does not currently drive.
+ * **electrical** HVAC demand, which responds to outdoor dry-bulb, occupancy AND
+ * (Stage 7.9) the façade's solar-induced cooling load, already converted to
+ * electrical kW by `BuildingThermalEngine`'s cooling-plant COP.
+ * `facadeSolarGainKW` is the **thermal** load the skin admits to the glazing —
+ * `coolingLoadKW`'s solar share is DERIVED from it, one step upstream, so the
+ * two still read as different rows here (different units, different point in
+ * the chain) even though they are no longer independent: closing the façade in
+ * a study now moves both, and moving `coolingLoadKW` alone would double-count
+ * the thermal chain rather than report it.
  */
 const METRICS: readonly MetricSpec[] = [
   {

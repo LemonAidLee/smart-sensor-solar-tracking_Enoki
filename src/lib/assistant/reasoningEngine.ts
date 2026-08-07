@@ -2,6 +2,7 @@ import type { SubsystemId } from '../knowledge/types'
 import { EngineeringKnowledgeBase } from '../knowledge'
 import { engineeringContext } from './index'
 import type { ReasoningIntent, StructuredExplanation } from './reasoningTypes'
+import { buildImplementationReferences } from './implementationIndex'
 
 export class EngineeringReasoningEngine {
   
@@ -196,7 +197,8 @@ export class EngineeringReasoningEngine {
       relatedSubsystems: Array.from(related),
       assumptions: knowledge.engineeringAssumptions,
       limitations: knowledge.knownLimitations,
-      conclusion
+      conclusion,
+      implementationReferences: buildImplementationReferences(Array.from(related)),
     }
   }
 }

@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { getSimulation } from '@/lib/engine/simulation'
+import { getSimulation, type Simulation } from '@/lib/engine/simulation'
 import { useTwinStore, getActiveDemonstrationSurface } from '@/lib/engine/store'
 import {
   PanelKinematics,
@@ -13,6 +13,8 @@ import {
 } from '@/lib/kinematics'
 import { activeFacing } from '@/lib/engine/solarViz'
 import { BLADE_LABEL, describeBladeMotion, formatBladeAngle } from '@/lib/dt/bladeAngle'
+import { ldrUpperSignal } from '@/lib/embedded/sensors'
+import { SignalChain } from '@/components/embedded/SignalChain'
 
 /**
  * KinematicsBody — the engineering "why did it rotate?" panel, rendered inside a
@@ -51,6 +53,8 @@ export function KinematicsBody() {
       intent={trackingIntent}
       summaries={summaries.map((s) => ({ id: s.id, active: s.id === debugId }))}
       onPick={setDebugSurface}
+      sim={sim}
+      panelId={surface.panels[0]?.id}
     />
   )
 }
@@ -65,6 +69,8 @@ function InspectorBody({
   intent,
   summaries,
   onPick,
+  sim,
+  panelId,
 }: {
   surfaceName: string
   normal: Vec3
@@ -75,6 +81,8 @@ function InspectorBody({
   intent: 'shade' | 'daylight'
   summaries: { id: string; active: boolean }[]
   onPick: (id: string | null) => void
+  sim: Simulation
+  panelId: string | undefined
 }) {
   const solar = solarVector(altitude, azimuth)
   const pk = new PanelKinematics(normal)
@@ -214,44 +222,22 @@ function InspectorBody({
       <Divider />
 
       <h3 className="text-xs font-semibold text-cyan-400">Virtual Sensor Pipeline</h3>
-
-      <Accordion title="Illuminance Estimation">
-        <PipelineBlock 
-          def="Converts physical solar irradiance into estimated illuminance (lux)."
-          system="Lux"
-          inputs={['Effective Irradiance (W/m²)']}
-          equation="Irradiance × 120"
-          result="See Telemetry"
-        />
-      </Accordion>
-
-      <Accordion title="LDR Response">
-        <PipelineBlock 
-          def="Simulates Light Dependent Resistor (LDR) curve."
-          system="Ohms (Ω)"
-          inputs={['Illuminance (Lux)']}
-          equation="500 / Lux (capped at 10MΩ)"
-          result="See Telemetry"
-        />
-      </Accordion>
-
-      <Accordion title="Voltage Divider & ADC">
-        <PipelineBlock 
-          def="Converts LDR resistance into a digital 12-bit ADC reading."
-          system="12-bit ADC (0-4095)"
-          inputs={['LDR Resistance', 'Pull-down (10kΩ)', 'Vcc (3.3V)']}
-          equation="(10k / (R_ldr + 10k)) × 4095"
-          result="See Telemetry"
-        />
-      </Accordion>
+      <p className="text-[9px] text-white/40 -mt-1 mb-1">
+        Reads the same GL5528 LDR chain (`src/lib/engine/ldrPhysics.ts`) the Virtual Embedded System panel shows — one shared implementation, never a second copy of the equations.
+      </p>
+      {panelId ? (
+        <SignalChain steps={ldrUpperSignal(sim, panelId).steps} startTag="SOLAR PHYSICS" endTag="ESP32-S3 ADC" />
+      ) : (
+        <p className="text-[10px] text-white/40">No panel selected.</p>
+      )}
 
       <Accordion title="Digital Filter">
-        <PipelineBlock 
-          def="Applies a discrete low-pass exponential smoothing filter."
+        <PipelineBlock
+          def="Applies a discrete low-pass exponential smoothing filter to the raw ADC counts above."
           system="12-bit ADC (Filtered)"
           inputs={['Raw ADC', 'Previous Filtered ADC', 'Alpha (dt / 0.5s)']}
           equation="Prev + (Raw - Prev) × Alpha"
-          result="Consumed by PBIF"
+          result={panelId ? `${sim.virtualSensor.getModuleFilteredADC(panelId)} / 4095 (raw ${sim.virtualSensor.getModuleADC(panelId)})` : 'Consumed by PBIF'}
         />
       </Accordion>
 

@@ -7,9 +7,15 @@
  *
  *   WEATHER_VALIDATION_MODE = true  →
  *     • no fault / degraded / offline panels (all operational)
- *     • no Auto / Solar-tracking / Storm / Privacy / Maintenance programs
- *     • no Virtual Embedded Controller, no PBIF, no servo easing
- *     • ONE manual façade angle (0–360°) applied UNIFORMLY to every panel
+ *     • no Auto / Solar-tracking / Storm / Privacy / Maintenance render
+ *       programs — the render `program` boots into `'manual'`
+ *     • no Virtual Embedded Controller, no servo easing
+ *     • `facadeControlMode` (the SOURCE of the target rotation — separate
+ *       from the render `program` above) defaults to `'pbif'`, same as the
+ *       full simulation: PBIF drives the façade by default in every mode,
+ *       routing through the real decision → policy → kinematics chain. An
+ *       operator can switch to `'manual'` (ONE angle, 0–360°, applied
+ *       UNIFORMLY to every panel) or `'sun-tracking'` via the Program control.
  *     • Decision / Electronics / Explainability layers hidden
  *
  *   WEATHER_VALIDATION_MODE = false →

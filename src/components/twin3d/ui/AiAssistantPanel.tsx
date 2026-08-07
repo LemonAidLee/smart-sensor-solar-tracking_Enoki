@@ -168,6 +168,27 @@ export function AiAssistantBody() {
                 <span className="text-emerald-100/90 text-[13px]">{response.explanation?.conclusion}</span>
               </div>
 
+              {/* Implementation References — traceability footer, computed
+                  deterministically from docs/ai/AI_IMPLEMENTATION_INDEX.md,
+                  never from the model's own output. */}
+              {response.explanation?.implementationReferences && response.explanation.implementationReferences.length > 0 && (
+                <div className="flex flex-col gap-2 mt-2 pt-3 border-t border-white/10">
+                  <span className="text-[10px] uppercase tracking-wider text-white/40">Implementation References</span>
+                  {response.explanation.implementationReferences.map((ref) => (
+                    <div key={ref.subsystem} className="flex flex-col gap-0.5 bg-black/20 p-2 rounded border border-white/5">
+                      <span className="text-xs text-emerald-200 font-medium">{ref.subsystem}</span>
+                      <span className="text-[11px] text-white/50 font-mono">{ref.documentation}</span>
+                      {ref.sourceFiles.length > 0 && (
+                        <span className="text-[11px] text-white/40 font-mono leading-relaxed">{ref.sourceFiles.join(', ')}</span>
+                      )}
+                      {ref.engineeringReferences.length > 0 && (
+                        <span className="text-[11px] text-white/40">{ref.engineeringReferences.join(' · ')}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
             </div>
           )}
 

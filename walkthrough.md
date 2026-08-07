@@ -9,6 +9,204 @@ Newest stage first.
 
 ---
 
+## Stage 7.10.2 — Architecture Consistency & Single Source of Truth Refactor
+
+_2026-08-07_
+
+### Objective
+`ENGINEERING_DESIGN_REVIEW.md`'s independent audit found the runtime implementation, this file, the static Engineering Knowledge Base, the implementation docs and the AI prompt context had drifted apart in six specific, checkable ways. None required new functionality — the physics and control logic were already correct or already a deliberate design choice; the fix in every case is either a documentation correction (implementation matches intent, the docs didn't) or a small alignment fix (two definitions of the same quantity disagreed, and one had to defer to the other). This stage closes all six, plus two more found during the accompanying global audit, and adds a maintenance rule to CLAUDE.md so the pattern is less likely to recur.
+
+### Contradictions resolved
+
+1. **Knowledge Base drift: façade/HVAC "uncoupled".** `subsystems.ts`'s `AdaptiveFacade` and `BuildingEnergy` entries, and the `AIWhatIf` FAQ, still described the façade's solar thermal gain and daylight as uncoupled from the BEMS's electrical demand — true before Stage 7.9/7.10, false since. Root cause: the knowledge base is intentionally hand-maintained (not generated from code) and wasn't updated when `BuildingThermalEngine`/`BuildingLightingEngine` shipped. `docs/ai/implementation/building_thermal.md`, `building_energy.md` and `prediction.md` had already self-flagged this exact staleness as a known gap.
+   - Also found and fixed while auditing the same file: the `PBIF` entry described a `Penalty(θ) = w_g·Glare(θ) + w_t·Thermal(θ) − w_d·Daylight(θ)` argmin optimization search that has never existed anywhere in `src/lib/pbif/` — PBIF v1 is, by its own module headers, a deterministic first-match-wins priority rule table with `confidence` hardcoded to 100. `docs/ai/implementation/pbif.md` had independently flagged this as a contradiction too.
+   - **Files**: `src/lib/knowledge/subsystems.ts` (`AdaptiveFacade`, `BuildingEnergy`, `PBIF` entries — responsibilities, `howItWorks`, `keyEquations`, `knownLimitations`, `futureExtensions`, FAQs rewritten to match the shipped code), `src/lib/assistant/projectContext.ts` (`PROJECT_OVERVIEW`'s simulation-flow line and IMPLEMENTED/NOT-YET-IMPLEMENTED lists), `docs/ai/implementation/building_thermal.md`, `building_energy.md`, `prediction.md`, `adaptive_facade.md`, `pbif.md` (self-flagged notes marked resolved).
+   - **Runtime behaviour changed**: none. `src/lib/knowledge/relationships.ts`'s dependency graph was audited and found already correct (`AdaptiveFacade → BuildingEnergy` is the right coarse-grained edge; `BuildingThermal`/`BuildingLighting` are intentionally not `SubsystemId` members — widening that union was considered and rejected, see `implementationIndex.ts`'s own header, to avoid rippling into the context builder and intent registry for no behavioural benefit).
+
+2. **`WEATHER_VALIDATION_MODE` — documented "no PBIF", implemented "PBIF by default".** `validationMode.ts` promised Validation Mode boots without PBIF driving the façade. `AdaptiveSkinEngine`'s constructor set `this.program = 'manual'` for validation mode but left `facadeControlMode` — the field `resolveTargetRotation` actually switches on — at its class-field default of `'pbif'`. Root cause: two related fields that needed to move together were set in two different places, and only one of them was touched when validation mode was added.
+   - **Decision**: implementation was the bug, not the documentation — PBIF driving the façade by default contradicted the mode's stated purpose, and the operator-facing "PBIF" option in the Program control (a legitimate, separately-added feature) remains fully available; only the *default* changed.
+   - **Files**: `src/lib/engine/adaptiveSkin.ts` (constructor now sets `facadeControlMode = 'manual'` alongside `program = 'manual'`; both fields' doc comments rewritten), `src/lib/engine/validationMode.ts` (header precisely distinguishes "not the default" from "not selectable"), `docs/ai/implementation/adaptive_facade.md`.
+   - **Runtime behaviour changed**: yes, one line. Validation Mode (`WEATHER_VALIDATION_MODE = true`, the current setting) now boots with `facadeControlMode: 'manual'` instead of `'pbif'` — matching the documented boot behaviour. An operator can still switch to PBIF explicitly via the Program control, unchanged.
+   - **Update (same day, explicit operator request):** reverted. The product decision was made the other way — PBIF should be the default façade-control source in every mode, including Weather Validation Mode. `AdaptiveSkinEngine`'s constructor no longer touches `facadeControlMode` (it stays at its class-field default, `'pbif'`, unconditionally); only the separate render `program` is still forced to `'manual'` in validation mode. `validationMode.ts` and `docs/ai/implementation/adaptive_facade.md` were updated to match. This is not a re-emergence of the original contradiction: code and documentation agree again, just at the opposite default.
+
+3. **Three rain-safe angles.** `trackingPolicy.ts`'s `WEATHER_PROTECTION` case hardcoded `0°` (ignoring `thresholds.ts`'s `RAIN_SAFE_ANGLE = 135°` entirely — never imported); `panelStates.ts`'s `STATE_ANGLE[RAIN_PROTECTION]` independently hardcoded the literal `135`, which happened to agree with `RAIN_SAFE_ANGLE` by coincidence, not by reading it. Root cause: `trackingPolicy.ts`'s `CLOSED` branch collapsed `SAFE_MODE` (wind) and `WEATHER_PROTECTION` (rain) into the same "return 0°" line, never differentiating the two physically distinct protective postures the constants and the other control path already assumed.
+   - **Decision**: `RAIN_SAFE_ANGLE` (135°, the water-shedding tilt — physically grounded, already the value the non-validation control path uses) is the one authoritative value; the PBIF/validation path's hardcoded 0° was the actual bug.
+   - **Files**: `src/lib/pbif/thresholds.ts` (`RAIN_SAFE_ANGLE`'s doc comment now states it is read by both paths; `WIND_SAFE_ANGLE`'s doc comment honestly states it is NOT yet wired in — a related, out-of-scope gap left as-is), `src/lib/pbif/trackingPolicy.ts` (`resolveTarget` now branches `WEATHER_PROTECTION → RAIN_SAFE_ANGLE` separately from `SAFE_MODE → 0°`; `policyFor()`'s behaviour text updated), `src/lib/engine/panelStates.ts` (`STATE_ANGLE[RAIN_PROTECTION]` now imports `RAIN_SAFE_ANGLE` instead of duplicating the literal), `PBIF_ENGINEERING_GUIDE.md` §15.6, `docs/ai/implementation/pbif.md` (Limitations, constants table, Future Extension Points).
+   - **Runtime behaviour changed**: yes. The PBIF/validation control path's `WEATHER_PROTECTION` state now tilts the façade to 135° instead of closing flat to 0°, matching the non-validation path and the documented rain-shedding intent. `SAFE_MODE` (wind) is unchanged — out of this issue's scope, and now honestly documented as such.
+
+4. **`PredictionEngine` falsely documented as unreachable from `tick()`.** Stated as fact in `predictionEngine.ts`, twice in `simulation.ts`, and in CLAUDE.md §11.1. Traced call chain: `Simulation.tick()`'s `resolve` block calls `engineeringContext.update(this)` → (eagerly, inside that method) `buildAIPrediction()` → `sim.getPrediction()` → `PredictionEngine.getReport()` → (on cache-key rollover) `.build()`. Root cause: the claim was accurate when written and became false when `EngineeringContextBuilder.update()` — called from `tick()` — was later extended to eagerly rebuild an `AIPrediction` context entry, without the three "never called from tick()" comments being revisited.
+   - **Decision**: per this issue's own instruction, correct the documentation rather than the runtime — the cost is genuinely bounded by two layers of caching (`EngineeringContextBuilder`'s coarse key, then `PredictionEngine`'s own `TIME_BUCKET_HOURS`-quantised key), so there is no performance problem to fix, only an inaccurate guarantee to restate correctly ("bounded, cached cost reachable from `tick()`", not "never called from `tick()`"). `FaultDetectionEngine`'s equivalent claim was independently re-verified and found still true (no `buildFaultDetection` entry exists in `EngineeringContextBuilder`'s eager rebuild map) — left unchanged.
+   - **Files**: `src/lib/prediction/predictionEngine.ts` (header), `src/lib/engine/simulation.ts` (`prediction` field doc comment, `getPrediction()` doc comment), `CLAUDE.md` §11.1, `docs/ai/implementation/prediction.md`.
+   - **Runtime behaviour changed**: none.
+
+5. **`VirtualSensorEngine` documented as modelling electrical noise; implementation is deterministic.** CLAUDE.md §2, `subsystems.ts`'s `VirtualSensors` entry (responsibilities and an FAQ describing injected Gaussian noise) both claimed a noise model that has never existed — the sensing chain is a pure function of irradiance, smoothed only by a legitimate first-order low-pass filter (τ = 0.5 s, Stage 7.10.1 confirmed this again when unifying the LDR chain).
+   - **Decision**: noise is intentionally NOT simulated — Stage 7.10.1's own validation criterion was "virtual sensor outputs remain deterministic" — so the documentation was corrected, not the engine.
+   - **Files**: `CLAUDE.md` §2, `src/lib/knowledge/subsystems.ts` (`VirtualSensors` responsibilities/knownLimitations/FAQ rewritten), `docs/ai/implementation/cyber_physical_pipeline.md` (Limitations and Future Extension Points reframed from "gap to close" to "resolved, no longer promised").
+   - **Runtime behaviour changed**: none.
+
+6. **`buildingEnergy.ts`'s header comment claimed a 42 W/m² peak; `LOAD_CATEGORIES` sums to 37 W/m².** (22 HVAC + 3 lighting + 7 equipment + 2 elevators + 3 services.) While auditing the rest of the file for other stale comments (per this issue's own instruction), also found and corrected: the module header still described Battery and Grid as "explicitly NOT implemented... no storage or grid exchange is simulated", referencing a "`FUTURE PORTS`" section that no longer exists in the file — stale from the file's original Stage 7.4 scope, never updated across Stage 7.5 (storage) and Stage 7.6 (grid). Three further comments repeated the same "grid not yet simulated" claim (the `EnergyBusState` ASCII diagram, the `StoragePort` doc comment, and `settleBus`'s own doc comment).
+   - **Files**: `src/lib/engine/buildingEnergy.ts` (module header rewritten to describe the current Stage 7.4–7.10 scope; the four "grid not yet simulated" comments corrected to describe `grid.ts`'s `GridEnergyEngine` as the real, implemented classifier).
+   - **Runtime behaviour changed**: none.
+
+### Global audit — additionally found and fixed
+
+- **Duplicated rain-intensity thresholds.** `embedded/sensors.ts`'s `rainLabel()` re-hardcoded the `0.05`/`0.35`/`0.65` band edges `pbif/thresholds.ts`'s `RAIN_LEVEL` already names. Fixed by importing `RAIN_LEVEL` instead of retyping its values — the same single-source-of-truth pattern as the rain-safe angle fix above.
+
+### Deliberately left unresolved (out of scope, now honestly documented as such)
+
+- `WIND_SAFE_ANGLE` (90°) remains declared but not wired into `SAFE_MODE`'s arithmetic — `thresholds.ts`, `trackingPolicy.ts`, `pbif.md` and `PBIF_ENGINEERING_GUIDE.md` all now say so explicitly rather than implying it is already live.
+- `src/lib/simulation/algorithms.ts` (the ~90%-dead legacy façade-decision module `ENGINEERING_DESIGN_REVIEW.md` §12 flags) was not touched — archiving it is a larger, separate cleanup than a documentation-consistency fix.
+- `contextBuilder.ts`'s `buildServoKinematics`/`buildAIWhatIf` placeholder `currentState` values (`ENGINEERING_DESIGN_REVIEW.md` §7) were not touched — fixing them means adding real state-derivation logic, which is new functionality, not a documentation correction.
+
+### New single-source-of-truth architecture (summary)
+
+- **LDR sensor physics** (Stage 7.10.1): `src/lib/engine/ldrPhysics.ts` — one authority, reused by `VirtualSensorEngine` and `embedded/sensors.ts`.
+- **Rain-safe angle** (this stage): `RAIN_SAFE_ANGLE` in `src/lib/pbif/thresholds.ts` — one authority, reused by `trackingPolicy.ts` (PBIF/validation control path) and `panelStates.ts` (non-validation control path).
+- **Rain-intensity display bands** (this stage): `RAIN_LEVEL` in `src/lib/pbif/thresholds.ts` — one authority, reused by PBIF's own Situation Assessment and `embedded/sensors.ts`'s display label.
+- **Façade→BEMS thermal/lighting coupling**: unchanged in code (already correct since Stage 7.9/7.10 — `BuildingThermalEngine`/`BuildingLightingEngine` publish once, `BuildingEnergyEngine` only ever adds their output), now correctly *described* everywhere that describes it.
+- **Documentation maintenance contract**: CLAUDE.md §12 ("Documentation Consistency Rules", new this stage) states the rule explicitly: an engine change and its knowledge-base/implementation-doc/architecture-diagram update happen in the SAME change, not as a deferred follow-up. `AI_KNOWLEDGE.md` §4's governance rule for `src/lib/knowledge/` was updated to match — it previously said knowledge-base updates require an explicit user request, which is exactly the gap that let issue 1 accumulate.
+
+### Validation
+- Every one of the six issues' governing files were re-read after editing to confirm the fix and the code agree.
+- `tsc --noEmit`, ESLint and `next build` all run clean after the change (see below).
+- No behaviour changed except the two explicitly authorized by their issue (`WEATHER_VALIDATION_MODE`'s default façade-control source, and the PBIF/validation path's rain-protection angle) — both were required by the issue's own instructions ("Do NOT leave contradictory behaviour" / "All subsystems must read the same value"), not incidental.
+
+---
+
+## Stage 7.10.1 — Resolve LDR Sensor Model Mismatch
+
+_2026-08-07_
+
+### Objective
+The Engineering Design Review found that the LDR sensor's *displayed* physics and its *executed* physics were two different equations. `embedded/constants.ts` declared a GL5528-datasheet power law (`R = R10 · (10/lux)^γ`) and the UI's equation badges showed exactly that — but the number underneath came from `virtualSensor.ts`'s unrelated `R = 500/lux` formula, duplicated a third time inside `embedded/sensors.ts`'s `ldrLowerSignal`, and a fourth time as static, further-diverged label text (`"500 / Lux (capped at 10MΩ)"`) inside `KinematicsInspector.tsx`'s "Virtual Sensor Pipeline" accordion. Four descriptions of the same sensor, three different formulas.
+
+### Root cause
+No shared implementation existed for the Environment → Electrical Signal chain. Each consumer that needed a lux/resistance/voltage/ADC number wrote its own arithmetic instead of calling a common function, so `embedded/constants.ts`'s `LDR_R10_OHMS`/`LDR_GAMMA` were read only inside display strings — dead constants, never in the arithmetic that produced the number those strings labelled.
+
+### Fix — one shared physics module
+`src/lib/engine/ldrPhysics.ts` (new) is now the sole authority for `Effective Irradiance → Lux → LDR Resistance → Divider Voltage → ADC Counts`, implementing the real GL5528 power law from `embedded/constants.ts`:
+```
+irradianceToLux(irrWm2)     = round(irrWm2 * LUX_PER_WM2)
+luxToLdrResistanceOhms(lux) = min(LDR_R10_OHMS * (10/lux)^LDR_GAMMA, LDR_DARK_RESISTANCE_OHMS)
+ldrResistanceToVoltage(R)   = VCC * (LDR_FIXED_RESISTOR_OHMS / (LDR_FIXED_RESISTOR_OHMS + R))
+voltageToAdcCounts(V)       = round((V / VCC) * ADC_MAX)
+```
+A new constant, `LDR_DARK_RESISTANCE_OHMS` (1 MΩ), clamps the power law where it would otherwise diverge to infinity as lux→0 — a physically-grounded ceiling (typical GL5528 dark-resistance order of magnitude) rather than a second inverse-proportion formula standing in for "very dark."
+
+Every consumer was pointed at this one module:
+- `VirtualSensorEngine` (`virtualSensor.ts`) — both the global reference sensor and the per-module loop now call `computeLdrChain()` instead of the inline `500/lux` arithmetic; only the first-order smoothing filter remains its own.
+- `embedded/sensors.ts`'s `ldrLowerSignal` — its self-shading proxy still recomputes downstream of the shared base irradiance (it has to, the shading factor is panel-specific), but through `computeLdrChain()`, not a local copy of the formula. `ldrUpperSignal` was already reading `VirtualSensorEngine`'s output directly and needed no change.
+- `KinematicsInspector.tsx`'s "Virtual Sensor Pipeline" section — the four hand-rolled, generic `PipelineBlock` accordions (which showed no real numbers, just "See Telemetry" placeholders, and one outright wrong equation string) were replaced with a direct render of `ldrUpperSignal(sim, panelId).steps` through the existing `SignalChain` component — the same steps the Virtual Embedded System panel already renders. The Inspector no longer describes the sensor chain in its own words; it displays the one true source, with real formula + substituted numbers + units per stage, live.
+- `src/lib/knowledge/subsystems.ts`'s `VirtualSensors` entry — `keyEquations` previously described the divider backwards (`V_out = V_cc * (R_ldr / (R_ldr + R_fixed))`, which would mean brighter light *lowers* the divider output) and omitted the lux/resistance stages entirely. Replaced with the real four-stage chain, matching `ldrPhysics.ts` exactly, so the Engineering Assistant's static knowledge base can no longer teach a contradictory circuit.
+- `docs/ai/implementation/cyber_physical_pipeline.md` — the implementation doc fed to the Gemini assistant on escalated questions explicitly documented the `500/lux` formula as current behaviour and listed "wire `LDR_R10_OHMS`/`LDR_GAMMA` into the arithmetic" as a *future* extension point. Rewritten to describe `ldrPhysics.ts` as the shared chain, with the equations table, constants table, and Limitations section all updated to match; the now-resolved item was removed from Future Extension Points.
+- `PBIF_ENGINEERING_GUIDE.md` §16.5 — three "Where documented" citations pointed at a `ldrDivider` function that never existed in `sensors.ts` (a stale name). Corrected to cite `ldrPhysics.ts`'s actual exported functions plus `sensors.ts`'s `ldrPipelineSteps` for the display layer; added `LDR_DARK_RESISTANCE_OHMS` to the Configurable Constants table.
+
+### What did not change
+The divider circuit topology (LDR on the VCC-side leg, fixed resistor to ground — brighter light raises the output voltage), `VCC = 3.3 V`, `LDR_FIXED_RESISTOR_OHMS = 10,000 Ω`, `LUX_PER_WM2 = 120`, the 0.5 s exponential smoothing filter, and the LDR-lower self-shading proxy's `1 - (1 - openness) * 0.35` factor are all unchanged — only the resistance-model arithmetic (and everywhere it was duplicated or mis-described) moved to match the model the codebase already claimed to run.
+
+### Validation
+- Exactly one LDR arithmetic implementation exists (`ldrPhysics.ts`); every prior duplicate (`virtualSensor.ts` ×2, `embedded/sensors.ts`, `KinematicsInspector.tsx`) now calls it or renders its output.
+- `LDR_R10_OHMS`/`LDR_GAMMA`/`LDR_FIXED_RESISTOR_OHMS` are read inside the arithmetic, not only inside display strings.
+- Sensor outputs remain a deterministic, pure function of irradiance (no RNG introduced).
+- `tsc`, ESLint and `next build` all run clean after the change (see repo CI / local verification).
+
+---
+
+## Stage 7.9.5 — Deterministic Daily Energy Initialisation
+
+_2026-08-04_
+
+### Objective
+Stage 7.9.4 made Daily Imported/Exported a correct function of simulated time — but only over the ticks the ledger had actually seen. A session opening (or a page reloading) with the clock already at 19:11 has never ticked through 00:00–19:11, so the ledger's honest answer for that stretch was "unknown," displayed as 0.0 kWh. Correct given what it knew, but not what the twin should show: today's real accumulated energy, regardless of when the browser happened to load it.
+
+### Root cause
+`DailyEnergyLedger` was only ever fed by live ticks. Its Stage 7.9.4 bucket design already solves "don't double-count a revisited interval," but a bucket nothing has ever visited is simply empty — there's a difference between "genuinely zero" and "never observed," and the ledger had no way to tell them apart or to fill the gap.
+
+### Initialisation strategy
+Rather than inventing a second, cheaper model to estimate the missing hours, `bootstrapDailyEnergy()` (new file, `src/lib/engine/dailyEnergyBootstrap.ts`) reconstructs them using the twin's own physics — the exact same `projectAt` the AI Prediction layer (Stage 8.1) already walks *forward* with, walked instead from a midnight base clock up to the landing time:
+
+```
+Weather Timeline → computeSun → planeIrradiance → moduleDcPowerW
+  → convertDcToAc → equilibriumThermalState → buildingDemandKW
+  → settleBus → planStorage
+```
+
+Every historical instant from 00:00 to "now" is a real evaluation of the twin's model at that hour, fed into the ledger exactly as a live tick would be. No second solar model, no second PV curve, no fabricated or averaged figure anywhere in the walk.
+
+Reused, not re-implemented — the exact simplifications `projectAt` already documents (and CLAUDE.md §11.2/§11.5 already accept) for projecting *forward* apply unchanged looking *backward*, for the identical reasons:
+- **Façade openness is pinned at its current measured mean** for the whole reconstructed day — recovering the blades' actual path through the day would mean reconstructing PBIF's decision history, and PBIF is the sole controller in either time direction.
+- **Thermal lags are read at equilibrium**, not integrated minute by minute.
+- **Weather is sampled from whichever timeline is active**, at each historical hour — exact for Scenario/Forecast Mode, since `sampleTimeline` is a pure function of hour-of-day (CLAUDE.md §5.3); Manual Mode has no history to sample, so the operator's current sliders are held for the whole day, the same persistence rule `projectDrivers` already uses forward.
+- **The battery starts the day at its own just-constructed default state of charge** and is carried forward through real `planStorage` dispatch decisions, one 5-minute step at a time, rather than skipped straight to "now."
+
+Wired into `Simulation`'s constructor (`src/lib/engine/simulation.ts`), immediately after the existing live-state seeding finishes (so `this.metrics`, `this.battery`, `this.buildingEnergy` etc. are all populated for `predictionContext()` to read): `bootstrapDailyEnergy(this.energyLedger, this.predictionContext(), this.clock.timeHours, this.battery.getState().storedKWh)`. One call, once, before the first live tick ever runs.
+
+### Why the reconstruction never touches a live engine
+`PredictionContext` is read-only data (CLAUDE.md §11.1 — no engine reference reaches it), and the battery figure passed in is a local number, not the live `BatteryEnergyEngine`. The walk's own scratch `storedKWh` and reused `EnergyBusState` buffer (`emptyBus()`, now exported from `prediction/projection.ts` for this reuse) go out of scope when the function returns. The only object it mutates is the `DailyEnergyLedger` passed in — Grid, Battery, PV and Building Energy stay exactly the engines Stage 7.9.4 already validated, live SOC and all.
+
+### Why the totals are deterministic
+Every step evaluates the SAME pure functions at the SAME historical clock position with the SAME held-constant inputs (façade openness, active timeline, battery-start assumption) — nothing here reads wall-clock time, randomness, or any mutable state outside the walk's own local `storedKWh`. Two independent bootstraps to the same landing hour therefore produce bit-identical totals (verified below), and Stage 7.9.4's bucket-overwrite rule still governs what happens if a live tick later revisits an hour the bootstrap already reconstructed — so rewinding a bootstrapped session behaves exactly like rewinding a purely-ticked one.
+
+### A performance pass, caught by benchmarking rather than guessing
+The first working version fed every step through the ordinary per-tick `update()`, which recomputes the full displayed totals (a rescan of the day's 86,400 one-second buckets) after every single one of up to 288 steps — 119 ms average for a 23:59 landing time. Since nothing reads `getTotals()` until the whole walk finishes, 287 of those 288 recomputes were pure waste. Added two small methods to `DailyEnergyLedger`: `beginBootstrap()` (clears the grid the way a fresh ledger already is) and `writeHistorical()` (the existing bucket-writing logic, `applyInterval`, exposed without the recompute) — the walk now calls `writeHistorical` for every step and `update()` exactly once, at the end, to place the read head and recompute a single time. This cut the same 23:59 benchmark to 14 ms — an 8× reduction — with zero change to the totals themselves (the full 21-scenario suite below still passes byte-for-byte identically).
+
+### Validation
+No test runner exists in this project (confirmed via `package.json`); verified with a standalone `tsx` harness constructing a real `Simulation`, reading its private `predictionContext()` (TS `private` is compile-time only) as a realistic template, and driving `bootstrapDailyEnergy` directly against fresh ledgers (deleted after use, never committed):
+- ✓ Fresh load at 07:00, 12:00, 19:00 and 23:30 each reconstructs non-trivial, plausible energy with `elapsedHours` matching the landing hour and `dayCount` staying at 1.
+- ✓ Landing exactly at 00:00 reconstructs exactly zero — nothing has happened yet, and nothing is fabricated to fill it.
+- ✓ Two independent bootstraps to the same landing hour (19:11) produce identical totals.
+- ✓ A bootstrap to 18:00 followed by a fine-stepped manual continuation to 19:00 matches a direct bootstrap to 19:00 — no gap or double count at the bootstrap-to-live-tick seam.
+- ✓ Rewinding a bootstrapped ledger from 19:00 back to 08:00 matches a direct bootstrap to 08:00, within the same ≤1-simulated-second quantisation bound `energyLedger.ts` already documents for Stage 7.9.4 (confirmed by tracing the ~0.05 kWh discrepancy to exactly that one shared bucket, not a logic error).
+- ✓ Crossing midnight after a bootstrap still advances `dayCount` correctly — the bootstrap leaves the ledger in exactly the state a purely-ticked session would be in, so Stage 7.9.4's wrap handling needs no special-casing for it.
+- ✓ Manual Mode (`timeline = null`) bootstraps without throwing, persisting the current weather across the reconstructed day.
+- ✓ A Scenario/Forecast-shaped synthetic timeline produces measurably different PV generation than the Manual-Mode persistence assumption — confirming the timeline is genuinely driving the reconstruction, not being ignored.
+- ✓ Benchmark: worst case (23:59 landing) averages 14 ms over 10 runs; a 7:00 landing (today's actual default) adds negligible cost to construction. Both are one-time, at startup — `tick()` is never touched by any of this.
+- ✓ TypeScript (`tsc --noEmit`) clean across the whole project.
+- ✓ ESLint clean on every file this stage touched.
+
+## Stage 7.9.4 — Fix Daily Energy Accumulation
+
+_2026-08-04_
+
+### Objective
+The Utility Grid card's "Daily Imported" / "Daily Exported" counters were a plain running accumulator: `DailyEnergyLedger.update()` added `bus.xKW × dtHours` onto a mutable total every tick. Correct only for a strictly forward, never-repeated playback — which a scrubbable, rewindable Digital Twin timeline is not. Playing morning→afternoon, rewinding, then replaying afternoon counted that interval's energy twice, so the daily totals grew without bound the more a session scrubbed around, and a big rewind (> 30 min, `DISCONTINUITY_HOURS`) wiped the totals to zero instead of restoring the correct value for the time landed on.
+
+### Root cause
+The ledger tracked energy as *state accumulated by ticks*, which makes the total depend on the history of calls (how many times an interval was ticked through), not on the clock's position. The fix reframes daily energy exactly as the spec states it: `Daily Imported Energy(t) = ∫ Grid Import Power dt` from 00:00 to the current simulated time `t` — a pure function of `t`, not of playback history.
+
+### New design: a bucketed daily history, `src/lib/engine/energyLedger.ts`
+`DailyEnergyLedger` now holds a fixed grid of 1-simulated-second buckets covering the day (86,400 of them), one entry per tracked flow (PV generation, building consumption, battery charge/discharge, grid import/export, plus the two peak-kW figures). On every tick:
+- **A bucket the clock is moving through for the first time in this pass** accumulates dt-weighted energy into it, same as the old accumulator did.
+- **A bucket the clock re-enters after having left it** (the signature of a rewind followed by a replay) is *overwritten*, not added to — `lastWrittenBucket` distinguishes "still moving forward through this same bucket" from "arrived here afresh," and only the latter clears it first.
+- **The displayed totals are recomputed every tick** as the sum of buckets from `0` up to the bucket containing the clock's current position — literally the integral from day-start to now. A pure clock reposition (scrub/rewind, `dtSimSeconds ≤ 0`) touches no bucket at all; it just changes which range `recompute()` sums, which is what makes a rewind "immediately restore" the correct total with no replay needed.
+- **Midnight wrap** (`dtSimSeconds > 0` and the hour-of-day decreased) still clears the whole grid and increments `dayCount`, matching the old ledger's day-rollover behaviour exactly — the one case that was already correct.
+
+One-second buckets bound the ledger's only remaining imprecision (landing exactly inside a bucket a previous pass already completed sums that whole bucket) to a fraction of a Wh even at full building load — below anything the UI rounds to.
+
+`elapsedHours` changed meaning slightly for the better: it now reads the current simulated time-of-day directly (`this.lastTimeHours`) rather than a running "hours ticked since the ledger was seeded," which is the more literal reading of its own doc comment ("simulated hours accumulated into the current day") and is what the Rooftop PV panel's collapsed badge actually wants to show.
+
+### A second bug found during validation, same file
+The first version of `applyInterval()`'s bucket-walking loop re-derived each bucket's end time by multiplying `index × BUCKET_HOURS`, while the walk position `h` advanced by addition — the two can disagree by a float epsilon exactly at a bucket boundary, occasionally making the computed segment end land at or behind `h`. That turns "advance to the next bucket" into "stay put or go backward," hanging the loop. Caught by a full-day tick simulation (see Validation) that hung instead of returning. Fixed by clamping the segment end to strictly exceed `h` (`Math.max(bucketEnd, h + 1e-9)`), which guarantees forward progress regardless of which way the rounding falls, plus an iteration cap as an independent backstop.
+
+### What was deliberately left alone
+- `Simulation.energyStepSimSeconds()` — already correctly derives `dtSimSeconds` from the clock itself (0 when paused, the wrap-adjusted delta when playing, 0 for a > 1 h jump) and needed no change; the ledger's fix is entirely internal to `energyLedger.ts`.
+- Grid, Battery and Building Energy calculations — `grid.ts`, `battery.ts`, `buildingEnergy.ts` are untouched. The ledger only *reads* `EnergyBusState`; it was never a source of truth for anything but the day-scoped totals.
+- A forward scrub straight to a time never actually simulated (e.g. jumping to 18:00 having never played through 12:00–18:00) shows the total for only the portion that was genuinely simulated — the ledger does not fabricate energy for an interval it never integrated through, consistent with how the thermal-mass and battery lag already re-seed rather than back-fill on the same kind of jump.
+
+### Validation
+No test runner exists in this project (confirmed via `package.json`); verified with a standalone `tsx` harness driving the ledger directly through the required scenarios (deleted after use, never committed):
+- ✓ Forward playback 00:00→12:00 matches the analytic integral of a fixed bus (10 kW import, 4 kW export) exactly.
+- ✓ Rewinding to 08:00 restores the correct 08:00 total instantly, no replay needed.
+- ✓ Replaying 08:00→12:00 reproduces the same 12:00 total as the first pass — no double count.
+- ✓ Looping morning↔afternoon three times does not inflate the total.
+- ✓ Scrubbing directly to a previously-simulated 18:00 (after a rewind) shows the correct total.
+- ✓ Crossing midnight during forward play advances `dayCount` and starts the new day's total from the wrapped sliver only.
+- ✓ Pause/resume (`dtSimSeconds = 0` frames interleaved with real ticks) neither loses nor double-counts energy.
+- ✓ A full simulated day of ticks at 20 Hz/1× (2,400 ticks) completes without hanging — this is what caught the float-epsilon loop bug above.
+- ✓ Per-tick cost of the full-grid `recompute()` measured directly: worst case (full day elapsed, 86,400-bucket scan) is sub-millisecond, under 1.5% of the environmental tier's 50 ms/tick budget.
+- ✓ TypeScript (`tsc --noEmit`) clean.
+- ✓ ESLint clean on `energyLedger.ts`.
+
 ## Stage 8.6 — Engineering Assistant Confidence-Based Routing
 
 _2026-08-03_
@@ -2398,3 +2596,182 @@ No positioning classes were added — the fix does not depend on a `relative` cl
 - ✓ Re-centring the same row is idempotent (no drift when "Now" re-fires the effect on the current hour).
 - ✓ The first row rests at the top and the last at the bottom — no overshoot at either end.
 - ✓ TypeScript, ESLint and `next build` all clean.
+
+---
+
+## Stage 7.9 — Building Thermal Response Engine
+
+### Objective
+Give the adaptive façade a *physical* effect on cooling demand. Until this stage the façade's solar gain (`facadeSolarGainKW`, `metrics.ts`) and the BEMS's electrical HVAC demand (`buildingEnergy.ts`) were independent — CLAUDE.md §11.5 documented this plainly, and the What-If layer's `limitation` text said so on every façade study. Closing the blades changed the façade's own display metrics but moved not one watt of real HVAC electrical demand.
+
+### New subsystem: `src/lib/engine/buildingThermal.ts`
+`BuildingThermalEngine` is the single authority for the chain:
+
+```
+Façade solar gain (kW thermal, from metrics.ts — never re-derived)
+  → Envelope transmission (ENVELOPE_TRANSMISSION_EFFICIENCY = 0.9)
+  → Convective / radiant split (ASHRAE RTS-style; convective fraction rises with
+    façade openness — an open cavity ventilates faster)
+  → Radiant share absorbed by thermal mass and released through a first-order
+    lag (TIME_CONSTANT_SIM_SECONDS = 20 simulated minutes — same exponential-
+    approach form buildingEnergy.ts already uses for the HVAC plant lag)
+  → Indoor heat gain (kW thermal) = convective + lagged radiant release
+  → Cooling load (kW ELECTRICAL) = indoor heat gain ÷ COOLING_PLANT_COP (3.5)
+```
+
+Every constant is declared in one `BUILDING_THERMAL` object with its engineering citation (ASHRAE Fundamentals frame/edge-loss allowance, ASHRAE RTS convective/radiant split, CIBSE Guide A heavyweight thermal-response class, ASHRAE 90.1 chiller COP range). `indoorTemperatureProxy` is explicitly a **display estimate**, never fed into any electrical calculation.
+
+Two pure functions are exported alongside the stateful engine:
+- `envelopeHeatGainKW` / `convectiveFraction` / `indoorTemperatureProxy` — the unlagged building blocks.
+- `equilibriumThermalState(facadeOpenness, facadeSolarGainKW, outdoorTempC, irradianceWm2)` — the chain evaluated as if the thermal-mass lag had already settled. This is what lets the AI Prediction/What-If layer reuse the SAME physics without integrating a 20-minute lag hour-by-hour over a 1–12 h horizon — exactly the simplification already established for the HVAC plant lag (`hvacDemandFactor`).
+
+### Pipeline change
+`Simulation.tick()`'s environmental tier now runs Building Thermal Response immediately after `solarPhysics.update()` and before `pvElectrical`/`pvInverter`/`buildingEnergy`. It reads `this.metrics.averageOpenness` / `averageSolarExposure` — the façade's most recently *settled* state (one environmental tick, 1/20 s, behind the façade's own blade easing, which still runs every frame for smooth 60 fps motion and was **not** reordered) — and `this.skin.getFacadeLayout().facadeArea`, feeds them through `facadeSolarGainKW` (the same authority the surface metrics and AI layer read), then `buildingThermal.update()`. `energyStepSimSeconds()` was hoisted one call earlier so the SAME `simSeconds` now integrates both the thermal-mass lag and the HVAC plant lag — one elapsed-time source, not two.
+
+### BEMS integration
+`buildingEnergy.ts` — both `BuildingEnergyEngine.update()` (live, in-place category loop) and the pure `buildingDemandKW()` (used by the AI projection) — gained a `solarCoolingLoadKW` parameter (default `0`, so any other caller is unaffected). It is added **only** to the `hvac` category's occupancy-driven baseline, both in the returned total and in the category's own `powerKW`/`share` so the Load Breakdown UI stays internally consistent. Occupancy, lighting, equipment, elevators and services are untouched — exactly "Base HVAC + Solar Cooling Load," per spec.
+
+### AI layer — updated, not duplicated
+Per CLAUDE.md §11.1 ("re-uses the engines' physics; never re-implements it"), `projectAt()` in `prediction/projection.ts` now calls `equilibriumThermalState()` with the SAME `facadeSolarGainKW` it already computed, and threads `.coolingLoadKW` into `buildingDemandKW()`. This was necessary, not optional: without it the projection and What-If layer would have silently diverged from the live twin the moment the coupling went live. Updated alongside it:
+- `prediction/types.ts` — `TwinProjection.facadeSolarGainKW` / `coolingLoadKW` doc comments, which asserted independence.
+- `prediction/whatif/compare.ts` — the header comment explaining the "two distinct cooling quantities."
+- `prediction/whatif/recommend.ts` — `recommendFacade()` now reports the electrical HVAC delta alongside the thermal one, and its `limitation` states the two *remaining* assumptions (equilibrium lag, fixed COP) instead of claiming no coupling exists.
+- `prediction/insights.ts` — the Cooling Demand evidence line now cites façade solar gain and openness alongside dry-bulb and occupancy.
+
+No new AI logic was added — Fault Detection, the Engineering Context Builder and the Reasoning Engine all read `SimSnapshot`/`PredictionContext` generically and pick up `thermal`/`coolingLoadKW` automatically.
+
+### New panel: Building Thermal Response
+`src/components/twin3d/ui/BuildingThermalPanel.tsx`, registered as tool `'thermal'` in `workspaceTools.tsx` (`WindowId` extended in `windowStore.ts`). Draws the five-stage chain top to bottom with a connecting arrow between each stage (mirroring the spec's own diagram), a cooling-load summary card, and a Thermal State card (outdoor/indoor temperature, façade openness, thermal lag with a "loading / releasing / settled" label, and the time constant). Read-only — it owns no logic, exactly like `RooftopPvPanel`, whose visual language it deliberately matches (`Metric` card, section shell, accent-tinted summary strip).
+
+### `SimSnapshot`
+Gained a `thermal: BuildingThermalState` field, published from `Simulation.buildingThermal.getState()` — a reference read, mutated in place on the environmental tier, costing nothing per snapshot poll (same convention as `energy`).
+
+### CLAUDE.md
+§2 gained the `BuildingThermalEngine` entry; §3's pipeline diagram gained the "Building Thermal Response" stage between Adaptive Façade and PV System; §8 lists the new engine; §10's roadmap item for this exact coupling was removed (done); §11.1's reused-pure-functions list gained `equilibriumThermalState`; §11.2 now counts four projection simplifications instead of three; §11.5's "not coupled" boundary was rewritten to describe what coupling now exists and what two assumptions remain.
+
+### Validation
+No test runner exists in this project (confirmed via `package.json`); as in Stage 7.8.5, the lag was verified **arithmetically** rather than through a UI session, plus a full `tsc --noEmit` and `npm run lint` pass over every touched file:
+- ✓ **Closing the façade reduces envelope heat gain** — `envelopeHeatGainKW = facadeSolarGainKW × 0.9`, and `facadeSolarGainKW` is itself directly proportional to openness (`metrics.ts`), so a closed façade (openness → 0) drives both to 0.
+- ✓ **HVAC demand changes gradually, no oscillation** — the radiant share is a single first-order exponential-approach lag (`α = 1 − e^(−dt/τ)`, `τ` = 1200 simulated seconds); at `dt` = 30 s a step change reaches ~39% of its new target after 10 simulated minutes and ~95% after three time constants (60 min) — monotonic, bounded, never overshoots, cannot oscillate (no feedback term).
+- ✓ **Thermal inertia survives cloud transitions** — a gain step to zero (cloud passing) decays only ~22% in 5 simulated minutes; the cooling load does not follow the cloud instantly.
+- ✓ **Indoor temperature changes smoothly** — `indoorTemperatureProxy` is a linear function of the same lagged `indoorHeatGainKW`, so it inherits the identical smoothed response.
+- ✓ **`dt ≤ 0` initialises without a startup transient** — verified the seed call in `Simulation`'s constructor snaps `radiantReleaseKW` straight to target (`α = 1`), matching `BuildingEnergyEngine`'s own established convention.
+- ✓ **Existing PV, battery and grid calculations unchanged** — none of `pvArray.ts`, `pvElectrical.ts`, `pvInverter.ts`, `battery.ts` or `grid.ts` were touched; `buildingEnergy.ts`'s new parameter defaults to `0`, so any hypothetical unmigrated caller is unaffected.
+- ✓ **Existing AI features continue functioning** — the byte-identical-baseline-walk assertion (§11.3) still holds: both the live prediction and a What-If sandbox call the identical `equilibriumThermalState` with identical inputs for the baseline case.
+- ✓ TypeScript (`tsc --noEmit`) clean across the whole project.
+- ✓ ESLint clean on every file this stage touched (`npm run lint`'s remaining 27 errors/50 warnings are 100% pre-existing, in `temp_old_sections/`, `archive/`, `adaptiveSkin.ts` and `algorithms.ts` — none in a file this stage modified).
+
+---
+
+## Stage 7.10 — Building Lighting Response Engine
+
+### Objective
+Give Lighting the same daylight awareness Stage 7.9 gave HVAC. Until this stage "Lighting" was a single occupancy-only load in `BuildingEnergyEngine` (8 W/m² whenever occupied) — blind to whether the sky was clear, cloudy, or the blades were open or shut.
+
+### New subsystem: `src/lib/engine/buildingLighting.ts`
+`BuildingLightingEngine` is the single authority for the chain:
+
+```
+Façade effective irradiance (0–1, metrics.averageSolarExposure — the SAME
+  normalised quantity facadeSolarGainKW already consumes, never re-derived)
+  → Outdoor illuminance (lux) via DAYLIGHT_LUMINOUS_EFFICACY_LM_PER_W (110 lm/W)
+  → Envelope visible transmission (VISIBLE_TRANSMISSION = 0.6, NFRC practice —
+    a distinct glazing property from GLAZING_SHGC, never conflated)
+  → Façade openness applied → Indoor illuminance (lux)
+  → Proportional daylight-harvesting control target against TARGET_INDOOR_LUX
+    (500 lux, EN 12464-1), floored at LIGHTING_CONTROL_MIN (10%) once any
+    artificial contribution is needed at all
+  → First-order controller lag (RESPONSE_TIME_SIM_SECONDS = 20 simulated s —
+    same exponential-approach form as the thermal/HVAC lags)
+  → Artificial Lighting electrical demand (kW) = rated daylight-responsive
+    capacity × occupancy (reused from buildingEnergy.ts, not re-derived) ×
+    lagged control level
+```
+
+Every constant lives in one `BUILDING_LIGHTING` object with its citation (EN 12464-1 target illuminance, NFRC 200 visible transmittance, CIE 108-1994/IESNA daylight luminous efficacy, ASHRAE 90.1 LPD daylight-zone share, IES RP-1 dimming-driver minimum). `lightingStatus()` classifies `Unoccupied` / `Fully Daylit` / `Daylight Harvesting` / `Full Artificial` from the same two published numbers the panel reads — no new physics.
+
+### Split with `buildingEnergy.ts` (mirrors the HVAC pattern exactly)
+`LOAD_CATEGORIES`'s `lighting` entry now carries only the non-daylight-responsive share (egress/corridor/back-of-house, 3 W/m², down from 8) — `BuildingEnergyEngine`'s own occupancy-driven model, unchanged in kind. `BuildingLightingEngine` owns the remaining daylight-responsive share (`ARTIFICIAL_LIGHTING_DENSITY_WM2` = 5 W/m²), so the two sum back to the original 8 W/m² total LPD at full occupancy with zero daylight (night) — Stage 7.10 changes *when* the peak is reached, not what it is. `grossFloorArea` was exported from `buildingEnergy.ts` so the lighting engine scales off the SAME floor-area authority rather than a second computation. `buildingDemandKW()` and `BuildingEnergyEngine.update()` both gained an `artificialLightingKW` parameter (default `0`, so the AI Prediction/What-If layers — deliberately untouched this stage — see unchanged behaviour), added only to the `lighting` category's baseline.
+
+### Pipeline change
+`Simulation.tick()` runs Building Lighting immediately after Building Thermal and before the PV/BEMS chain — independently consuming `metrics.averageSolarExposure` / `averageOpenness`, exactly as Building Thermal does; neither depends on the other's output.
+
+### New panel: Building Lighting Response
+`src/components/twin3d/ui/BuildingLightingPanel.tsx`, registered as tool `'lighting'` in `workspaceTools.tsx` (`WindowId` extended in `windowStore.ts`). Mirrors `BuildingThermalPanel.tsx`'s shape: a Lighting Balance summary card, a six-stage Lighting Chain, a Lighting State card (Environmental/Lighting/System groups), and a collapsible Engineering Model & Calculations section (pipeline overview, equations, constants, references, live breakdown, assumptions). Read-only — every value comes from `SimSnapshot.lighting`.
+
+### Rooftop PV panel
+`LoadBreakdown`'s Lighting row gained a `LightingBreakdownRow` (mirroring `HvacBreakdownRow`): Lighting (Total), with Base Lighting and Artificial Lighting shown as a percentage-contribution split underneath, reading `BuildingLightingEngine`'s published `lightingElectricalKW` directly.
+
+### `SimSnapshot`
+Gained a `lighting: BuildingLightingState` field, published from `Simulation.buildingLighting.getState()` — a reference read, mutated in place on the environmental tier, costing nothing per snapshot poll (same convention as `thermal`/`energy`).
+
+### Validation
+No test runner exists in this project; verified live against the running twin (Playwright + a real browser) and arithmetically:
+- ✓ **Bright midday reduces artificial lighting** — 16:38, façade open, Indoor Illuminance 7,920 lux (≫ 500 lux target) → Lighting Level 0%, Lighting Electricity 0.0 kW, Lighting Savings at its maximum.
+- ✓ **Base Lighting matches the new split exactly** — 5,000 m² gross floor area × 3 W/m² = 15.0 kW, read directly off the Load Breakdown panel.
+- ✓ **Darkness + occupancy correctly gates artificial demand** — scrubbed to 00:41 (night, unoccupied): Lighting Requirement 100% (fully dark) but Lighting Electricity still 0.0 kW, because occupancy (not daylight) is the reason nothing is lit — status `Unoccupied`.
+- ✓ **Closing the façade / cloud cover** reduce indoor daylight and raise lighting demand through the same openness/exposure inputs Building Thermal already uses — no separate physics to diverge.
+- ✓ **PV/Battery/Grid calculations unchanged** — `pvArray.ts`, `pvElectrical.ts`, `pvInverter.ts`, `battery.ts`, `grid.ts` untouched; the new BEMS parameter defaults to `0`.
+- ✓ **Building Thermal unaffected** — `buildingThermal.ts` untouched; the two engines read the same façade metrics independently.
+- ✓ TypeScript (`tsc --noEmit`) clean, ESLint clean, `next build` clean.
+- ✓ Zero browser console errors across every session driven against the live dev server.
+
+---
+
+## Stage 7.11 — Performance Profiling & Optimization
+
+### Objective
+The twin averaged ~30 FPS; target a stable 120 FPS (or as close as reasonably achievable) with zero change to simulation accuracy, engineering behaviour or subsystem architecture. Evidence-driven only — no speculative optimisation.
+
+### Phase 1 — Audit methodology and a false start
+A Playwright + Chrome DevTools Protocol harness was built to measure real FPS (via `requestAnimationFrame` timestamps), draw calls/triangles (via patched `WebGLRenderingContext.prototype.drawElements`/`drawArrays`/instanced variants), React commit volume (via the `window.__REACT_DEVTOOLS_GLOBAL_HOOK__.onCommitFiberRoot` technique), and a JS CPU sampling profile (`Profiler.start`/`stop`), reduced to self-time ranked by file and function.
+
+The first run measured **0.6 FPS** — a false alarm: headless Chromium on this machine falls back to SwiftShader (software GL), confirmed via CDP `SystemInfo.getInfo` (`GL_RENDERER: ANGLE (..., SwiftShader ...)`). A headed browser reported the real GPU (`NVIDIA GeForce RTX 4060 Laptop GPU` via ANGLE/D3D11) and a realistic ~72 FPS baseline. All profiling was redone headed; the harness lived at `.perf/` for the duration of the audit and was deleted once the work was done — it is a measurement tool, not part of the app.
+
+### Root causes, ranked by evidence (before optimisation, 3 engineering panels open, real GPU)
+Baseline: **72.5 FPS avg / 89.3 median / 18.0 1% low**, 140.4 React commits/s, 9,966 draw calls/s, 5.7M triangles/s.
+
+1. **`OcclusionDebug.tsx`'s `setTelemetry()` firing on every rendered frame** (up to 120 Hz) — replacing a 17-field object and re-rendering a 17-row `<Html>` panel every single frame, though the underlying readings (irradiance, ADC, blade angle) only change on the ~20 Hz environmental tier. The single largest contributor to React commit volume and a major source of the `jsxDEV`/`createElement`/`getBoundingClientRect` cost in the CPU profile.
+2. **`adaptiveSkin.ts`'s `updateValidation()` easing loop and `FacadeLayer.tsx`'s `useFrame`** — both looped all 1,620 panels unconditionally every render frame, with no early-out for a panel already settled at its target (`updateValidation`: 236 ms of the 8 s sample; `FacadeLayer.useFrame`: 76 ms; `makeRotationAxis`: 110 ms). `FacadeLayer` additionally forced `instanceMatrix.needsUpdate`/`instanceColor.needsUpdate` — a full GPU buffer re-upload of ~1,620 × 16 floats — every frame regardless.
+3. **The shadow depth pass re-rendering every frame** — `shadowMap.autoUpdate` was never set to `false`, so every shadow-casting object (1,620 fins, 189 roof modules, curtain wall) was re-rendered into the 2048×2048 shadow map on every frame, whether or not the sun or any shadow-caster had actually moved since the last one. Reflected in `getParameters`/`getProgram`/`setProgram` (three.js's WebGL program/state-binding internals) totalling ~700 ms of the sample.
+4. **`RoofSolarArray.tsx`'s irradiance-driven instance colour** — same unconditional-recompute-and-reupload pattern as (2), for 189 modules, at the ~20 Hz value-change rate the loop ignored.
+5. Ruled out as bottlenecks (confirmed, not assumed): the façade/roof/city already use `InstancedMesh` throughout (1 draw call per repeated geometry, not per-instance meshes); the environment redesign (`CityLife.tsx`) is already rate-limited (`rateHz(20)`) and skips under `prefersReducedMotion()`; `RainFX`/`NightSky` are gated behind their own visibility conditions; no post-processing exists anywhere in `src/components/twin3d`; the AI Prediction/Fault-Detection engines never appeared in the CPU profile at all (their caching, per CLAUDE.md §11.1, is working as designed).
+
+### Optimisations performed
+- **`OcclusionDebug.tsx`** — the telemetry + ray recompute (everything past resolving the selected panel) is now gated behind a `rateHz(15)` `RateLimiter` (the same primitive `CityLife.tsx` already used, from `scheduler.ts` — not reinvented). The cheap "nothing selected / nighttime" visibility fast-paths stay unthrottled.
+- **`adaptiveSkin.ts`** — the per-frame easing loop now skips a panel entirely (no trig, no assignment) once `|target − angle| ≤ SERVO_SETTLED_DEG` (0.5°, the SAME "settled" threshold every Servo Status readout already uses — CLAUDE.md §5.2 — not a new magic number), snapping exactly to target once rather than approaching it forever.
+- **`FacadeLayer.tsx`** — a per-panel dirty cache (`rotationAngle`, solar-driven tint, health — `Float64Array`, not `Float32`, so it compares exactly against the JS-double source values rather than silently never matching) skips the Vector/Matrix4 recompute for any panel unchanged since last frame, and `instanceMatrix`/`instanceColor` `needsUpdate` is now conditional on at least one panel actually having changed. Held in a `useRef` (not `useMemo` — mutated inside `useFrame`, outside React's render phase, per this project's `react-hooks/immutability` lint rule).
+- **`RoofSolarArray.tsx`** — the same dirty-check pattern, keyed on irradiance alone (roof modules don't move).
+- **Shadow map throttling** — `TwinScene.tsx` sets `gl.shadowMap.autoUpdate = false` once, on `onCreated`. Every place that actually moves a shadow-relevant object flags a refresh itself the frame it happens: `FacadeLayer.tsx` when its dirty check finds a moved panel, `SceneEnvironment.tsx` when the sun rig's own existing dirty-check (sun-object-identity + weather scalars) fires. A `rateHz(2)` safety net in `SimDriver.tsx` force-refreshes the shadow map regardless, so anything that moves declaratively (React props, e.g. an edited neighbour building) rather than imperatively can never leave a shadow stale for more than half a second.
+- **AI polling tier split** — `store.ts`'s `pull()` (telemetry, ~8 Hz) and a new `pullAi()` (Prediction + Fault Detection, ~3 Hz) are now separate actions, driven by `SimDriver.tsx` on independent accumulators. `pullAi()` reuses the most recently pulled `snapshot` rather than calling `sim.snapshot()` a second time. Matches the tiered-update-frequency architecture `scheduler.ts` already documents (render / ~20–30 Hz / ~2–10 Hz / ~1 Hz-or-dirty) and the project's own stated target (engineering panels ~8–10 Hz, AI panels ~2–5 Hz) — the Prediction report describes a 12 h-ahead projection and the FDD report a periodic health check; neither needs telemetry-rate freshness.
+
+### What was deliberately NOT done
+No simulation engine's physics, update order or fidelity was touched — Phase 3's engines (weather, solar, PBIF, servo, PV, battery, grid, thermal, lighting) were already allocation-free, cached and correctly tiered (the CPU profile never surfaced any of them as a cost). No per-object shadow dirty-tracking was attempted for every conceivable shadow-caster (e.g. `CityLife.tsx`'s moving vehicles) — the risk of silently missing one and freezing its shadow was judged higher than the marginal win, so the 2 Hz safety net covers that class of case instead. DPR, antialiasing, shadow-map resolution and geometry LOD were left unchanged — reducing them would trade visual fidelity for FPS, which the objective explicitly ruled out; they remain candidates for a future stage if 120 FPS is still not met on lower-end hardware.
+
+### Validation (benchmark, same headed-GPU harness, 3 panels open)
+
+| Metric | Before | After | Δ |
+|---|---|---|---|
+| Avg FPS | 72.5 | 96.1 | **+33%** |
+| Median FPS | 89.3 | 90.1 | ~flat |
+| 1% low FPS | 18.0 | 17.9 | ~flat (see note) |
+| React commits/s | 140.4 | 81.9 | **−42%** |
+| Draw calls/s | 9,966 | 10,318 | ~flat |
+| Triangles/s | 5.71 M | 5.03 M | −12% |
+| `updateValidation`/`FacadeLayer.useFrame` in top-20 CPU self-time | yes (236 ms / 76 ms) | **no longer present** | removed |
+
+With all 10 engineering/AI tool windows open simultaneously (a heavier stress case, not directly comparable to the 3-panel row above): 71.8 FPS avg / 89.3 median / 12.0 1% low, 73.6 React commits/s.
+
+- ✓ **No console errors** across every profiling and visual-sanity session.
+- ✓ **Visual sanity confirmed** — façade fin shading/shadows, PBIF-driven blade motion, and the Solar Telemetry/Building panels all render correctly and update live; "Servo Status: Holding position" with target = current confirms the idle early-out reflects genuine settlement, not a frozen display.
+- ✓ TypeScript (`tsc --noEmit`) clean, ESLint clean (zero new errors or warnings; the four pre-existing unused-variable warnings in `FacadeLayer.tsx`/`adaptiveSkin.ts` predate this stage, confirmed via `git stash`), `next build` clean.
+
+### Remaining bottlenecks (honest, ranked)
+1. **The 1% low (~18 FPS) did not move.** The optimisations removed sustained per-frame cost but not whatever causes periodic stalls — the leading suspects (not yet isolated) are GC pauses and/or drei `<Html>`'s own internal per-frame screen-space reprojection for the debug-overlay label groups, which this stage did not patch (it is drei's internal implementation, not this codebase's).
+2. **Three.js's `getParameters`/`getProgram`/`setProgram` remain the largest single named cost** (three.js's own WebGL program/material-state binding) — largely a function of material/shader variant count and draw-call volume, both untouched this stage.
+3. **Draw calls and triangle throughput are essentially unchanged** — because the simulation clock was left playing during measurement, the sun (and therefore PBIF's targets) moves continuously, so at any instant *some* panel among 1,620 is still mid-transition, which alone is enough to keep the shadow pass firing most frames. The shadow-map throttle's full benefit shows only once the façade is genuinely settled (paused clock, or a stable steady-state period).
+
+### Recommendations for future optimisation
+- Profile with React DevTools' own Profiler (not just the commit-count proxy used here) to find whether drei `<Html>` reprojection is in fact the 1% low's cause.
+- If still needed after that, DPR/antialiasing/shadow-resolution tuning — explicitly deferred this stage as a fidelity/FPS trade the objective ruled out making unilaterally.
+- A frustum-culling or LOD pass for the 1,620 fins and 189 roof modules was not investigated (draw-call count is already low — 1 per instanced group — so the win would be CPU-side matrix work for off-screen panels only, likely small next to what Stage 7.11 already removed).

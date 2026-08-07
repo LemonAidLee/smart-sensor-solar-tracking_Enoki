@@ -12,6 +12,8 @@ import type { Vec3 } from './math'
 import type { PanelState } from './panelStates'
 import type { FacadeLayoutSummary } from './facadeModule'
 import type { BuildingEnergySnapshot } from './buildingEnergy'
+import type { BuildingThermalState } from './buildingThermal'
+import type { BuildingLightingState } from './buildingLighting'
 import type { BatteryState } from './battery'
 import type { GridState } from './grid'
 import type { DailyEnergyTotals } from './energyLedger'
@@ -321,6 +323,10 @@ export interface SimSnapshot {
   facade: FacadeLayoutSummary
   /** BEMS — building demand, the AC bus and the live energy balance. */
   energy: BuildingEnergySnapshot
+  /** Building Thermal Response — façade solar gain through the envelope to cooling load. */
+  thermal: BuildingThermalState
+  /** Building Lighting Response — outdoor daylight through the envelope to artificial lighting demand. */
+  lighting: BuildingLightingState
   /** BESS — state of charge and charge/discharge dispatch. */
   battery: BatteryState
   /** Utility grid — the balancing component's live exchange and state. */

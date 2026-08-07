@@ -22,6 +22,7 @@ import {
   type EquipmentSpec,
 } from '@/lib/engine/pvEquipment'
 import { DEFAULT_C_RATE } from '@/lib/engine/battery'
+import type { BuildingLoadCategoryState } from '@/lib/engine/buildingEnergy'
 
 /**
  * RooftopPvPanel — the dedicated engineering panel for the Rooftop PV Plant and
@@ -66,6 +67,12 @@ const ACCENT = {
   deficit: '#f87171',
   surplus: '#34d399',
   planned: '#64748b',
+  // Same solar accent `BuildingThermalPanel.tsx` uses for façade solar gain, so
+  // the Solar Cooling figure reads as the same quantity across both panels.
+  solarCooling: '#f59e0b',
+  // Same accent `BuildingLightingPanel.tsx` uses for artificial lighting, so
+  // this figure reads as the same quantity across both panels.
+  artificialLighting: '#facc15',
 } as const
 
 /** Inverter states that should read as an alarm rather than normal operation. */
@@ -520,9 +527,28 @@ function Key({ color, label, value }: { color: string; label: string; value: num
 /* ── Load breakdown ──────────────────────────────────────────────────────────
    Where the building's demand is actually going, by category. Collapsed by
    default so the section stays scannable (guide §10, progressive disclosure). */
+/**
+ * Load Breakdown — the building's demand by category (guide §9: Occupancy,
+ * Lighting, Equipment, Elevators, Services are `BuildingEnergyEngine`'s own;
+ * HVAC alone is a sum of two authorities, Base HVAC (`BuildingEnergyEngine`'s
+ * occupancy/dry-bulb model) and Solar Cooling (`BuildingThermalEngine`'s
+ * façade-driven addition, Stage 7.9). `HvacBreakdownRow` is where that split
+ * is shown; every other category renders through the plain `CategoryRow`.
+ */
 function LoadBreakdown() {
   const [open, setOpen] = useState(false)
   const energy = useTwinStore((s) => s.snapshot.energy)
+  // Solar Cooling is read straight from `BuildingThermalEngine`'s published
+  // state — the SAME field `BuildingThermalPanel` shows as "HVAC Electrical
+  // Demand" — so the two can never diverge (guide §11.5). Safe to select this
+  // stable nested reference here: `LoadBreakdown` is a child of `RooftopPvBody`,
+  // which already re-renders every poll via its own `s.snapshot` subscription
+  // (see the Building Thermal Response panel's own live-update fix for why that
+  // matters for a TOP-level panel body but not for a child like this one).
+  const thermal = useTwinStore((s) => s.snapshot.thermal)
+  // Same stable-reference reasoning as `thermal` above — `BuildingLightingEngine.getState()`
+  // returns the SAME mutated-in-place object every tick.
+  const lighting = useTwinStore((s) => s.snapshot.lighting)
 
   return (
     <div className="mt-2">
@@ -537,26 +563,127 @@ function LoadBreakdown() {
       </button>
       {open && (
         <div className="mt-1 space-y-1">
-          {energy.categories.map((c) => (
-            <div key={c.id} className="flex items-center gap-2">
-              <span className="w-[86px] shrink-0 text-[9px] text-white/45">{c.label}</span>
-              <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
-                <span
-                  className="block h-full rounded-full transition-[width] duration-300"
-                  style={{ width: `${c.share * 100}%`, background: ACCENT.load }}
-                />
-              </span>
-              <span className="w-[52px] shrink-0 text-right font-mono text-[9px] tabular-nums text-white/60">
-                {c.powerKW.toFixed(1)} kW
-              </span>
-            </div>
-          ))}
+          {energy.categories.map((c) =>
+            c.id === 'hvac' ? (
+              <HvacBreakdownRow key={c.id} category={c} solarCoolingKW={thermal.coolingLoadKW} />
+            ) : c.id === 'lighting' ? (
+              <LightingBreakdownRow key={c.id} category={c} artificialLightingKW={lighting.lightingElectricalKW} />
+            ) : (
+              <CategoryRow key={c.id} label={c.label} share={c.share} powerKW={c.powerKW} />
+            ),
+          )}
           <p className="pt-0.5 text-[8.5px] leading-snug text-white/25">
             {energy.floorAreaM2.toLocaleString()} m² gross floor area ·{' '}
             {Math.round(energy.occupancy * 100)}% occupancy
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+/** One category's proportional bar + power reading — the shared row shape every category uses. */
+function CategoryRow({ label, share, powerKW }: { label: string; share: number; powerKW: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-[86px] shrink-0 text-[9px] text-white/45">{label}</span>
+      <span className="h-1 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
+        <span
+          className="block h-full rounded-full transition-[width] duration-300"
+          style={{ width: `${share * 100}%`, background: ACCENT.load }}
+        />
+      </span>
+      <span className="w-[52px] shrink-0 text-right font-mono text-[9px] tabular-nums text-white/60">
+        {powerKW.toFixed(1)} kW
+      </span>
+    </div>
+  )
+}
+
+/**
+ * HVAC (Total) plus its two-part composition. `baseKW` is `category.powerKW −
+ * solarCoolingKW` — arithmetic on two already-authoritative numbers, not a
+ * second calculation of either (`BuildingEnergyEngine.update()` computed the
+ * total by adding `solarCoolingKW` onto its own occupancy/dry-bulb model in
+ * the first place, so subtracting it back out recovers exactly that model's
+ * own figure). Solar Cooling's Contribution — the new metric guide §7.9.3
+ * section 2 asks for — is `solarCoolingKW / total × 100%`, shown inline.
+ */
+function HvacBreakdownRow({
+  category,
+  solarCoolingKW,
+}: {
+  category: BuildingLoadCategoryState
+  solarCoolingKW: number
+}) {
+  const baseKW = Math.max(0, category.powerKW - solarCoolingKW)
+  const contributionPct = category.powerKW > 0 ? (solarCoolingKW / category.powerKW) * 100 : 0
+  return (
+    <div className="space-y-0.5">
+      <CategoryRow label="HVAC (Total)" share={category.share} powerKW={category.powerKW} />
+      <div className="flex items-center gap-2 pl-3">
+        <span className="w-[75px] shrink-0 text-[8.5px] text-white/35">Base HVAC</span>
+        <span className="flex-1" />
+        <span className="w-[52px] shrink-0 text-right font-mono text-[8.5px] tabular-nums text-white/45">
+          {baseKW.toFixed(1)} kW
+        </span>
+      </div>
+      <div className="flex items-center gap-2 pl-3">
+        <span className="w-[75px] shrink-0 text-[8.5px] text-white/35">Solar Cooling</span>
+        <span className="flex-1" />
+        <span
+          className="shrink-0 text-right font-mono text-[8.5px] tabular-nums"
+          style={{ color: ACCENT.solarCooling }}
+        >
+          {solarCoolingKW.toFixed(1)} kW ({Math.round(contributionPct)}%)
+        </span>
+      </div>
+      <p className="pl-3 text-[8px] leading-snug text-white/20">
+        Solar Cooling = Building Thermal Response&apos;s HVAC Electrical Demand — one authority, read here directly.
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Lighting (Total) plus its two-part composition — the Stage 7.10 mirror of
+ * `HvacBreakdownRow`. `baseKW` is `category.powerKW − artificialLightingKW`,
+ * recovering `BuildingEnergyEngine`'s own occupancy-driven baseline (the same
+ * arithmetic reasoning `HvacBreakdownRow` already uses). Artificial Lighting's
+ * contribution is `artificialLightingKW / total × 100%`.
+ */
+function LightingBreakdownRow({
+  category,
+  artificialLightingKW,
+}: {
+  category: BuildingLoadCategoryState
+  artificialLightingKW: number
+}) {
+  const baseKW = Math.max(0, category.powerKW - artificialLightingKW)
+  const contributionPct = category.powerKW > 0 ? (artificialLightingKW / category.powerKW) * 100 : 0
+  return (
+    <div className="space-y-0.5">
+      <CategoryRow label="Lighting (Total)" share={category.share} powerKW={category.powerKW} />
+      <div className="flex items-center gap-2 pl-3">
+        <span className="w-[75px] shrink-0 text-[8.5px] text-white/35">Base Lighting</span>
+        <span className="flex-1" />
+        <span className="w-[52px] shrink-0 text-right font-mono text-[8.5px] tabular-nums text-white/45">
+          {baseKW.toFixed(1)} kW
+        </span>
+      </div>
+      <div className="flex items-center gap-2 pl-3">
+        <span className="w-[75px] shrink-0 text-[8.5px] text-white/35">Artificial Lighting</span>
+        <span className="flex-1" />
+        <span
+          className="shrink-0 text-right font-mono text-[8.5px] tabular-nums"
+          style={{ color: ACCENT.artificialLighting }}
+        >
+          {artificialLightingKW.toFixed(1)} kW ({Math.round(contributionPct)}%)
+        </span>
+      </div>
+      <p className="pl-3 text-[8px] leading-snug text-white/20">
+        Artificial Lighting = Building Lighting Response&apos;s Lighting Electrical Demand — one authority, read here directly.
+      </p>
     </div>
   )
 }

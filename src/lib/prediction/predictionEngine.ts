@@ -27,8 +27,24 @@
  *
  * When the key is unchanged the previously built report object is returned by
  * reference, so React's reference equality sees no change and the panel does not
- * re-render. `tick()` never calls into this file — the simulation loop carries no
- * prediction cost at all.
+ * re-render.
+ *
+ * ── `tick()` reachability (corrected, Stage 7.10.2) ──────────────────────────
+ * `Simulation.tick()` DOES reach this file: its environmental-tier `resolve`
+ * block calls `engineeringContext.update(this)`
+ * (`src/lib/assistant/contextBuilder.ts`), which eagerly rebuilds every
+ * subsystem context — including `AIPrediction`, via `buildAIPrediction()` →
+ * `sim.getPrediction()` → `this.getReport()` below — whenever ITS OWN
+ * (coarser) cache key has changed. This does not defeat the caching above: a
+ * `getReport()` call gated behind a stale `engineeringContext` key still costs
+ * only this file's own key comparison unless `TIME_BUCKET_HOURS` (or another
+ * dependency) has actually rolled over, so the simulation loop's marginal
+ * prediction cost stays bounded to an occasional full `build()`, not a
+ * per-tick one. Previously documented (here, in `simulation.ts`, and in
+ * CLAUDE.md §11.1) as "never called from `tick()`" — that overstated the
+ * guarantee; the corrected claim is "bounded, cached cost reachable from
+ * `tick()`", which is what actually holds and is what the AI layer's own
+ * "nothing fabricated" discipline requires this comment to say.
  */
 
 import type { PredictionContext, PredictionReport, HorizonForecast, TwinProjection } from './types'

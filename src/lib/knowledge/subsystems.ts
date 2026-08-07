@@ -66,27 +66,30 @@ export const subsystems: SubsystemKnowledge[] = [
     purpose: 'Models the physical electronic sensors embedded in the façade.',
     responsibilities: [
       'Convert raw incident irradiance into simulated analog electrical signals.',
-      'Inject realistic electrical noise and thermal drift.',
+      'Apply a first-order low-pass smoothing filter to the raw ADC reading (τ = 0.5 s) — the only temporal behaviour this engine models.',
       'Map physical sensor layouts (e.g., upper/lower LDRs) into discrete ADC channels.'
     ],
     inputs: ['Incident Irradiance', 'Temperature', 'Wind Speed', 'Rain Intensity'],
     outputs: ['LDR Voltages', 'Anemometer Pulse Rate', 'Rain Sensor Resistance'],
-    howItWorks: 'Translates physical environmental loads into simulated electrical responses using transfer functions that mimic real hardware components (e.g., photoresistors in a voltage divider circuit), including ADC quantization.',
+    howItWorks: 'Translates physical environmental loads into simulated electrical responses using transfer functions that mimic real hardware components — a GL5528-style CdS photoresistor wired as the VCC-side leg of a voltage divider — including ADC quantization. The full chain (irradiance → lux → LDR resistance → divider voltage → ADC counts) is computed by exactly one shared module, `src/lib/engine/ldrPhysics.ts`, reused by both the live twin (`VirtualSensorEngine`) and the Virtual Embedded System explainability layer (`embedded/sensors.ts`) — the equations below are that module, not a description of it.',
     keyEquations: [
-      'V_out = V_cc * (R_ldr / (R_ldr + R_fixed))',
-      'ADC_val = floor((V_out / V_ref) * 4095)'
+      'Ev = eta * G  (illuminance from effective irradiance, eta = 120 lux per W/m^2)',
+      'R_ldr = R10 * (10 / Ev)^gamma  (R10 = 10,000 ohm, gamma = 0.7, clamped at a 1 M ohm dark ceiling)',
+      'V_out = V_cc * (R_fixed / (R_fixed + R_ldr))  (R_fixed = 10,000 ohm; the LDR is the VCC-side leg, so brighter light raises V_out)',
+      'ADC_val = round((V_out / V_ref) * 4095)'
     ],
     engineeringAssumptions: [
-      'LDR response is roughly logarithmic with respect to lux.',
+      'LDR resistance follows the GL5528 datasheet power law (R = R10 * (10/lux)^gamma), extrapolated beyond its calibrated 10-100 lux range to full daylight illuminance — documented, not hidden.',
       'ADC is 12-bit.'
     ],
     knownLimitations: [
-      'Does not model long-term component degradation.'
+      'Does not model long-term component degradation.',
+      'Deterministic by design: no electrical noise or thermal-drift model exists. A given irradiance input always produces the same reading, modulo the smoothing filter\'s own transient response.'
     ],
     relatedSubsystems: ['SolarPhysics', 'Weather', 'EmbeddedController'],
     engineeringReferences: ['LDR GL5528 Datasheet', 'ESP32 ADC Specifications'],
     frequentlyAskedQuestions: [
-      { question: 'Why do the sensors fluctuate?', answer: 'The engine injects a simulated noise floor (Gaussian noise) to mimic real-world electrical and thermal interference in analog circuits.' }
+      { question: 'Why do the sensors fluctuate?', answer: 'Because the irradiance driving them changes — sun angle, cloud attenuation, façade rotation — smoothed by a first-order low-pass filter (τ = 0.5 s) so a reading eases toward its new value rather than jumping. There is no injected noise; the same irradiance always yields the same settled reading.' }
     ],
     futureExtensions: ['Modeling dirt accumulation (soiling) over time.']
   },
@@ -122,30 +125,32 @@ export const subsystems: SubsystemKnowledge[] = [
   {
     id: 'PBIF',
     name: 'Predictive Building Intelligence Framework (PBIF)',
-    purpose: 'The master algorithmic optimization engine for the adaptive façade.',
+    purpose: 'A deterministic, rule-based decision layer that picks ONE building-level operational objective for the façade — despite the "Predictive" in its name, PBIF v1 contains no prediction, optimization, ML or MPC (stated explicitly in its own module headers). It never outputs a panel angle itself.',
     responsibilities: [
-      'Evaluate competing building objectives: solar thermal gain, daylighting, and glare.',
-      'Compute the theoretically optimal façade blade angle for the current time and conditions.',
-      'Issue the Target Blade Angle to the Embedded Controller.'
+      'Classify wind, rain and solar-resource inputs into engineering states (Situation Assessment).',
+      'Resolve ONE operational state — NORMAL_TRACKING, ECONOMY_TRACKING, WEATHER_PROTECTION or SAFE_MODE — via a first-match-wins priority table (Structural Safety › Weather Protection › Solar Availability › Thermal Demand).',
+      'Hand the resolved state to the Tracking Policy, which alone routes it through the existing kinematics solver into a target angle.'
     ],
-    inputs: ['Sun Position', 'Current Weather', 'Building Energy State'],
-    outputs: ['Target Blade Angle', 'Optimization Metrics (Glare, Heat, Light)'],
-    howItWorks: 'Calculates the performance of the façade across all possible angles (0° to 90°). It assigns weights to daylighting (maximize), glare (minimize), and thermal gain (minimize in cooling-dominant climates), identifying the angle that yields the lowest overall penalty score.',
+    inputs: ['Wind Speed', 'Rain Intensity', 'Solar ADC (cloud/irradiance proxy)', 'Outdoor Temperature'],
+    outputs: ['Operational State (PbifState)', 'Priority Tier', 'Confidence (always 100 — no predictive/AI source exists yet to vary it)'],
+    howItWorks: 'Evaluates a declarative, ordered rule table top-down; the first rule whose condition matches wins and no lower-priority rule is ever consulted, so the whole policy is auditable at a glance. The resolved state then selects a Tracking Policy: full kinematics tracking, a dynamic-deadband-limited tracking (actuator-wear mitigation), or a predefined safe orientation (wind- or rain-protection) that suspends tracking entirely.',
     keyEquations: [
-      'Penalty(θ) = w_g * Glare(θ) + w_t * Thermal(θ) - w_d * Daylight(θ)',
-      'θ_opt = argmin(Penalty(θ))'
+      'state = firstMatch(RULES) over [windBand, rainBand, solarResource, thermalDemand], strict priority order',
+      'ECONOMY_TRACKING: move only if |targetAngle - currentAngle| > DYNAMIC_DEADBAND_DEG[solarResource]'
     ],
     engineeringAssumptions: [
-      'Optimization is discrete (evaluated at fixed degree intervals).',
-      'The room interior requires constant lux levels during occupied hours.'
+      'Thresholds (wind/rain bands, solar-resource ADC bands) are fixed, named constants, not learned or adaptive.',
+      'No hysteresis: classification is a single-pass band walk with no separate rising/falling threshold and no memory of the previous tick.'
     ],
     knownLimitations: [
-      'Does not yet predict future weather within its own immediate optimization loop; relies on instantaneous state.'
+      'Not predictive despite the name: PBIF v1 reacts to the current instant only — it does not read the 48-hour forecast at all (that is the AI Prediction layer\'s job, and PBIF is not wired to consume its output).',
+      '`confidence` is hardcoded to 100 on every decision; it exists as a field so a future predictive source can populate it without an interface change, not because today\'s confidence is actually assessed.'
     ],
     relatedSubsystems: ['Weather', 'SolarPhysics', 'EmbeddedController', 'BuildingEnergy'],
     engineeringReferences: ['ASHRAE Standard 55 (Thermal Environmental Conditions)'],
     frequentlyAskedQuestions: [
-      { question: 'Why didn\'t the façade move?', answer: 'PBIF incorporates a deadband threshold to prevent micro-adjustments. If the new optimal angle is too close to the current angle, it avoids actuating to save motor life and energy.' }
+      { question: 'Why didn\'t the façade move?', answer: 'Under ECONOMY_TRACKING, PBIF applies a dynamic deadband threshold (tighter when solar resource is high, wider when it is low) to prevent micro-adjustments — if the new target angle is too close to the current one, it holds position to save motor life and energy.' },
+      { question: 'Is PBIF an optimizer or an AI?', answer: 'No — it is a deterministic rule table, by its own module documentation. It contains no weighting, penalty function, angle sweep or learning of any kind. Model Predictive Control using the 48-hour forecast is a named future extension, not current behaviour.' }
     ],
     futureExtensions: ['Model Predictive Control (MPC) utilizing the 48-hour forecast.']
   },
@@ -200,14 +205,15 @@ export const subsystems: SubsystemKnowledge[] = [
       'Diffuse light is isotropic.'
     ],
     knownLimitations: [
-      'Does not currently feed thermal gain directly into the HVAC electrical load (uncoupled).'
+      'Downstream HVAC capacity is not yet limited: BuildingThermalEngine (Stage 7.9) currently assumes the cooling plant can always remove 100% of the heat this engine admits.'
     ],
     relatedSubsystems: ['ServoKinematics', 'SolarPhysics', 'BuildingEnergy'],
     engineeringReferences: ['LBNL WINDOW / Radiance geometrical models'],
     frequentlyAskedQuestions: [
-      { question: 'Why is daylight non-zero when blades are closed?', answer: 'Even when blocking direct sun, diffuse light from the sky and ground reflections still enters through gaps and ambient scattering.' }
+      { question: 'Why is daylight non-zero when blades are closed?', answer: 'Even when blocking direct sun, diffuse light from the sky and ground reflections still enters through gaps and ambient scattering.' },
+      { question: 'Does the façade\'s solar gain affect HVAC electrical demand?', answer: 'Yes, since Stage 7.9. This engine\'s solar gain output feeds BuildingThermalEngine, which converts it into HVAC electrical demand (via a cooling-plant COP) that BuildingEnergy adds to its own bus. Daylight similarly feeds BuildingLightingEngine (Stage 7.10) for artificial-lighting demand. Both are separate sibling engines documented in docs/ai/implementation/building_thermal.md and building_lighting.md, not (yet) individually registered in this knowledge base.' }
     ],
-    futureExtensions: ['Coupling Façade thermal gain directly to BEMS HVAC electrical demand.']
+    futureExtensions: ['Modelling a capacity-limited HVAC response (today the cooling plant is assumed to always meet demand exactly).']
   },
   {
     id: 'RooftopPV',
@@ -309,27 +315,30 @@ export const subsystems: SubsystemKnowledge[] = [
       'Model HVAC thermal loads based on ambient temperature.',
       'Provide total required AC power demand to the energy bus.'
     ],
-    inputs: ['Simulated Time (Hour of Day)', 'Ambient Temperature'],
+    inputs: ['Simulated Time (Hour of Day)', 'Ambient Temperature', 'Façade Solar Cooling Load (kW electrical, from BuildingThermalEngine)', 'Façade Artificial Lighting Addition (kW electrical, from BuildingLightingEngine)'],
     outputs: ['Building Demand (kW)'],
-    howItWorks: 'Combines a fixed diurnal schedule for occupancy-driven loads with a weather-responsive curve for HVAC. As ambient temperature rises above the cooling setpoint, the HVAC electrical demand increases proportionally to remove the heat.',
+    howItWorks: 'Combines a fixed diurnal schedule for occupancy-driven loads with a weather-responsive curve for HVAC (15-minute thermal-mass lag). As ambient temperature rises above the cooling setpoint, the HVAC electrical demand increases proportionally to remove the heat. Since Stage 7.9/7.10, the façade\'s own thermal and daylight effect on the building — computed by the sibling BuildingThermalEngine and BuildingLightingEngine, never re-derived here — is added straight onto the HVAC and Lighting categories\' occupancy-driven baselines, because both arrive already expressed in the same electrical kW those categories use.',
     keyEquations: [
       'Base_Load = Occupancy_Profile(t) * Max_Base_kW',
-      'HVAC_Load = max(0, (T_ambient - Setpoint) * Cooling_Factor)',
-      'Total_Demand = Base_Load + HVAC_Load'
+      'HVAC_Load = max(0, (T_ambient - Setpoint) * Cooling_Factor) + Facade_Solar_Cooling_kW',
+      'Lighting_Load = Base_Lighting(Occupancy) + Facade_Artificial_Lighting_kW',
+      'Total_Demand = HVAC_Load + Lighting_Load + Equipment_Load + Elevators_Load + Services_Load'
     ],
     engineeringAssumptions: [
-      'HVAC responds instantaneously to ambient temperature (no thermal mass lag).',
+      'HVAC responds instantaneously to ambient temperature (no thermal mass lag) — but see limitations: the façade-driven addition brings its own, separate lag from BuildingThermalEngine.',
       'Building is strictly cooling-dominant (no heating load modeled).'
     ],
     knownLimitations: [
-      'BEMS electrical demand is currently uncoupled from the Façade\'s solar thermal gain calculation.'
+      'HVAC capacity is not yet limited: coolingRequiredKW (BuildingThermalEngine) always equals the heat gain admitted, so this engine\'s HVAC demand never reflects a plant running at its ceiling.',
+      'The façade-driven addition is read at BuildingThermalEngine/BuildingLightingEngine\'s own equilibrium/lag, not independently re-derived here — this engine only ever adds their published output, never recomputes the thermal or daylight chain itself.'
     ],
-    relatedSubsystems: ['Weather', 'UtilityGrid', 'Battery'],
+    relatedSubsystems: ['Weather', 'UtilityGrid', 'Battery', 'AdaptiveFacade'],
     engineeringReferences: ['ASHRAE 90.1 Load Profiles'],
     frequentlyAskedQuestions: [
-      { question: 'Why does demand spike in the afternoon?', answer: 'Afternoon demand peaks due to the combination of maximum occupancy base loads and peak HVAC cooling demand driven by the highest daily ambient temperatures.' }
+      { question: 'Why does demand spike in the afternoon?', answer: 'Afternoon demand peaks due to the combination of maximum occupancy base loads and peak HVAC cooling demand driven by the highest daily ambient temperatures.' },
+      { question: 'Does closing the façade blades change HVAC electrical demand?', answer: 'Yes, since Stage 7.9. Less admitted solar gain lowers BuildingThermalEngine\'s cooling-plant electrical draw, which this engine adds straight onto its own occupancy-driven HVAC baseline — a real, traceable electrical effect, not just a thermal-comfort display number.' }
     ],
-    futureExtensions: ['Coupling HVAC demand directly to Façade solar gain and modeling building thermal mass lag.']
+    futureExtensions: ['Modelling an HVAC capacity ceiling so coolingRequiredKW can diverge from indoor heat gain under extreme load (see BuildingThermalEngine).']
   },
   {
     id: 'Battery',
@@ -446,7 +455,7 @@ export const subsystems: SubsystemKnowledge[] = [
     relatedSubsystems: ['AIPrediction', 'Battery', 'UtilityGrid', 'RooftopPV'],
     engineeringReferences: ['Digital Twin Counterfactual Simulation'],
     frequentlyAskedQuestions: [
-      { question: 'Why does a locked-façade study show no electrical change?', answer: 'Because the Façade\'s thermal gain and the BEMS\'s HVAC electrical demand are currently uncoupled. The study correctly shows a thermal change, but it cannot propagate to electrical demand yet.' }
+      { question: 'Does a locked-façade study show an electrical change?', answer: 'Yes, since Stage 7.9/7.10. Façade solar gain and daylight couple into projected HVAC and lighting electrical demand via BuildingThermalEngine/BuildingLightingEngine, so a locked-façade study moves solar gain, daylight AND projected HVAC/lighting electrical demand together — a thermal-only change with zero electrical effect would now indicate a bug, not expected behaviour.' }
     ],
     futureExtensions: ['Financial payback period calculations for hardware upgrades.']
   },

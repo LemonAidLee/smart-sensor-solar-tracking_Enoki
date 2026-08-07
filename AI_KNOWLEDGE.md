@@ -59,7 +59,7 @@ Standard reading sequence for future AI assistants:
 
 - **`CLAUDE.md`**: Updated ONLY when architecture changes.
 - **`walkthrough.md`**: Updated after implementation stages.
-- **`src/lib/knowledge/` (EngineeringKnowledgeBase)**: Updated ONLY when the user explicitly requests updating engineering knowledge. Do NOT update automatically.
+- **`src/lib/knowledge/` (EngineeringKnowledgeBase)**: Updated in the SAME change whenever an engineering subsystem's behaviour changes (CLAUDE.md §12) — not deferred to a separate, explicitly-requested pass. Stage 7.10.2 revised this rule after finding several entries left stale by earlier stages that touched the engine but not the knowledge base describing it.
 - **`AI_KNOWLEDGE.md`**: Updated ONLY when knowledge locations change, new AI subsystems are introduced, or documentation responsibilities change. Do NOT update after ordinary feature implementations.
 
 ---

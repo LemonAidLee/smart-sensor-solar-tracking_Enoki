@@ -6,6 +6,8 @@ import { engineeringReasoning } from './reasoningEngine'
 import { promptBuilder } from './promptBuilder'
 import type { StructuredExplanation } from './reasoningTypes'
 import type { SubsystemId } from '../knowledge/types'
+import { getGeminiConfig, logGeminiConfigStatusOnce, missingApiKeyMessage } from './geminiConfig'
+import { buildImplementationReferences } from './implementationIndex'
 
 /** Shape Gemini is asked to fill. `clarification` is the ONLY channel through
  *  which the model may ask the user to specify a subsystem — see req. #3: the
@@ -27,35 +29,30 @@ export class GeminiAssistantProvider implements AssistantProvider {
   private memory: Array<{ role: 'user' | 'model'; parts: { text: string }[] }> = []
 
   constructor() {
-    if (process.env.NODE_ENV === 'development') {
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''
-      const model = process.env.NEXT_PUBLIC_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash'
-
-      console.log('Gemini Provider')
-      if (apiKey) {
-        console.log('✓ API key loaded')
-      } else {
-        console.warn('⚠ API key missing')
-      }
-
-      if (model) {
-        console.log(`✓ Model:\n${model}`)
-      } else {
-        console.warn('⚠ Model missing')
-      }
-    }
+    // Logs the resolved config (enabled?, key loaded?, model, which env var
+    // supplied each) exactly once, dev-only, never the key value itself.
+    logGeminiConfigStatusOnce()
   }
 
+  /** Lazily builds the ONE `GoogleGenAI` instance this provider will ever
+   *  use and caches it on `this.ai` — every subsequent call reuses it rather
+   *  than reconstructing it. Throws (does not silently return a client with
+   *  an empty key) when no key is configured, so the caller's catch block
+   *  gets the real, specific reason rather than the SDK's generic
+   *  "API key is missing" error surfacing later, mid-request. */
   private getAI(): GoogleGenAI {
     if (!this.ai) {
-      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || ''
-      this.ai = new GoogleGenAI({ apiKey })
+      const config = getGeminiConfig()
+      if (!config.enabled) {
+        throw new Error(missingApiKeyMessage())
+      }
+      this.ai = new GoogleGenAI({ apiKey: config.apiKey })
     }
     return this.ai
   }
 
   private getModelName(): string {
-    return process.env.NEXT_PUBLIC_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash'
+    return getGeminiConfig().model
   }
 
   /** "gemini-3.5-flash" → "Gemini 3.5 Flash" — the display label the panel
@@ -89,11 +86,24 @@ export class GeminiAssistantProvider implements AssistantProvider {
       }
     }
 
+    // Fail fast on a configuration error — this is NOT the same failure class
+    // as a network/quota/timeout problem (that's the try/catch below), so it
+    // gets its own branch, its own console signal, and its own user-facing
+    // reason naming the exact missing env var, instead of surfacing as an
+    // unexplained "Gemini is currently unavailable".
+    const config = getGeminiConfig()
+    if (!config.enabled) {
+      const reason = missingApiKeyMessage()
+      console.error(`[Gemini Assistant] ${reason}`)
+      return this.fallback(query, reason)
+    }
+
     try {
       const systemInstruction = promptBuilder.buildSystemPrompt()
-      const userPrompt = promptBuilder.buildUserPrompt(text, {
+      const relatedSubsystems = explanation?.relatedSubsystems ?? []
+      const userPrompt = await promptBuilder.buildUserPrompt(text, {
         primarySubsystem,
-        relatedSubsystems: explanation?.relatedSubsystems ?? [],
+        relatedSubsystems,
         explanation,
       })
 
@@ -154,6 +164,13 @@ export class GeminiAssistantProvider implements AssistantProvider {
         }
       }
 
+      // Computed from `implementationIndex.ts` alone — NEVER from Gemini's own
+      // JSON output — so "Implementation References" can never name a doc or
+      // source file that doesn't actually exist (system prompt rule #9 tells
+      // Gemini not to attempt this itself).
+      const referencedSubsystems = new Set<SubsystemId>(parsed.relatedSubsystems as SubsystemId[])
+      if (primarySubsystem) referencedSubsystems.add(primarySubsystem)
+
       const generatedExplanation: StructuredExplanation = {
         observation: parsed.observation,
         evidence: parsed.evidence,
@@ -162,6 +179,7 @@ export class GeminiAssistantProvider implements AssistantProvider {
         assumptions: parsed.assumptions,
         limitations: parsed.limitations,
         conclusion: parsed.conclusion,
+        implementationReferences: buildImplementationReferences(Array.from(referencedSubsystems)),
       }
 
       return {
@@ -174,8 +192,13 @@ export class GeminiAssistantProvider implements AssistantProvider {
         confidence,
       }
     } catch (e: unknown) {
-      console.error("Gemini Assistant Error:", e)
-      return this.fallback(query, 'Gemini is currently unavailable. Using the deterministic engineering assistant.')
+      // Reaching here means config was valid (checked above) — this is a
+      // genuine runtime failure: network, quota, timeout, or a malformed/
+      // unparsable response. Logged with the real error object so the root
+      // cause is never lost to a generic message.
+      const detail = e instanceof Error ? e.message : String(e)
+      console.error('[Gemini Assistant] Runtime error (network/quota/timeout/parse):', e)
+      return this.fallback(query, `Gemini request failed (${detail}). Using the deterministic engineering assistant.`)
     }
   }
 

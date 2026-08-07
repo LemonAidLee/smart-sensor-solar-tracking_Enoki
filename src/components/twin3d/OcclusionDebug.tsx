@@ -7,6 +7,7 @@ import * as THREE from 'three'
 import { getSimulation } from '@/lib/engine/simulation'
 import { useTwinStore, getActiveDemonstrationSurface, getActiveDemonstrationModule } from '@/lib/engine/store'
 import { BLADE_LABEL, describeBladeMotion, formatBladeAngle } from '@/lib/dt/bladeAngle'
+import { rateHz } from '@/lib/engine/scheduler'
 
 const RAY_LENGTH = 150
 
@@ -65,6 +66,16 @@ export function OcclusionDebug() {
    */
   const rays = useRef({ capacity: 0, positions: new Float32Array(0), colors: new Float32Array(0) })
 
+  // Stage 7.11 — `setTelemetry` was firing on EVERY rendered frame (up to
+  // 120 Hz), each call replacing a 17-field object and re-rendering the
+  // 17-row `<Html>` panel below — the single largest contributor to React
+  // commit volume found while profiling. The underlying readings only change
+  // on the ~20 Hz environmental tier anyway, so 15 Hz here is imperceptible
+  // (guide: "reduce update frequency only where visually imperceptible") while
+  // cutting this component's render cost by roughly 8×. Reuses the same
+  // `RateLimiter` every other tiered subsystem in the twin already uses.
+  const telemetryTier = useRef(rateHz(15))
+
   const ensureRayCapacity = (modules: number) => {
     const r = rays.current
     if (r.capacity >= modules) return
@@ -84,9 +95,15 @@ export function OcclusionDebug() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lineGeo])
 
-  useFrame(() => {
+  useFrame((_state, dt) => {
     if (!meshRef.current) return
-    
+
+    // The "nothing selected / nighttime" fast paths stay unthrottled below —
+    // they're cheap visibility toggles and should react immediately. Only the
+    // telemetry + ray recompute (the expensive, 17-field-object-per-frame
+    // part) is gated to the tier.
+    const tierDue = telemetryTier.current.tick(dt) > 0
+
     if (!sim.sun.isDaytime) {
       meshRef.current.visible = false
       setTelemetry(null)
@@ -116,7 +133,12 @@ export function OcclusionDebug() {
       return
     }
     targetPanels = [selectedPanel]
-    
+
+    // Reuse last tick's telemetry + rays until the tier is next due — a
+    // selected panel's readings move at the ~20 Hz environmental tier at
+    // most, so redoing this every render frame bought nothing.
+    if (!tierDue) return
+
     // Compute telemetry
     const rawGHI = Math.round(sim.solarPhysics.getGlobalRawGHI())
     const cloudAttenuation = sim.solarPhysics.getGlobalCloudAttenuation()

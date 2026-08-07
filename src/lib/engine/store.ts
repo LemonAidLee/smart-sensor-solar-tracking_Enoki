@@ -121,7 +121,16 @@ interface TwinState {
   runWhatIf: () => void
   /** Discard the cached study. */
   resetWhatIf: () => void
+  /** Telemetry tier (~8-10 Hz, driven by `SimDriver`) — snapshot only. */
   pull: () => void
+  /**
+   * AI advisory tier (~2-4 Hz, driven by `SimDriver` on its own slower
+   * cadence). Split from `pull()` per Stage 7.11: the Prediction/FDD reports
+   * describe a 12 h-ahead projection and a periodic health check respectively
+   * — neither needs telemetry-rate freshness, and AI panels re-rendering at
+   * the same ~8-10 Hz as the live gauges was work with no perceptible benefit.
+   */
+  pullAi: () => void
 }
 
 export function getActiveDemonstrationSurface(sim: ReturnType<typeof getSimulation>, debugSurfaceId: string | null) {
@@ -376,24 +385,30 @@ export const useTwinStore = create<TwinState>((set, get) => {
     pull: () => {
       if (scrubbing) return
       const snap = sim.snapshot()
+      // While a scenario drives the weather, the mirrored inputs must follow the
+      // timeline too — they are what the collapsed readouts and (on returning to
+      // Manual) the sliders start from.
+      if (sim.weatherScenario.isActive()) {
+        set({ snapshot: snap, weather: mirrorWeather() })
+      } else {
+        set({ snapshot: snap })
+      }
+    },
+    pullAi: () => {
+      if (scrubbing) return
       // The prediction report is CACHED by its engine: this returns the identical
       // object while nothing it depends on has changed, so the AI panel's
       // selector sees no reference change and does not re-render.
       const prediction = sim.getPrediction()
       // Same caching guarantee as prediction — the FDD engine only re-runs its
       // twelve subsystem checks when something a rule reads has actually moved.
-      const faultDetection = sim.getFaultDetection(snap)
+      // Reuses the MOST RECENT telemetry snapshot rather than pulling a fresh
+      // one — this tier never needs to be more current than the snapshot tier.
+      const faultDetection = sim.getFaultDetection(get().snapshot)
       // Staleness is only meaningful once a study exists, so the check is skipped
       // entirely otherwise — no sandbox runs here either way, only a key compare.
       const whatIfStale = get().whatIf !== null && sim.isWhatIfStale()
-      // While a scenario drives the weather, the mirrored inputs must follow the
-      // timeline too — they are what the collapsed readouts and (on returning to
-      // Manual) the sliders start from.
-      if (sim.weatherScenario.isActive()) {
-        set({ snapshot: snap, weather: mirrorWeather(), prediction, faultDetection, whatIfStale })
-      } else {
-        set({ snapshot: snap, prediction, faultDetection, whatIfStale })
-      }
+      set({ prediction, faultDetection, whatIfStale })
     },
   }
 })

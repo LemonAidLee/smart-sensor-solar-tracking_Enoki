@@ -24,6 +24,7 @@
  */
 
 import { clamp, deg2rad, rad2deg } from './math'
+import { RAIN_SAFE_ANGLE } from '@/lib/pbif/thresholds'
 
 /** Full mechanical travel of a blade, in degrees. */
 export const ROTATION_MIN = 0
@@ -47,8 +48,10 @@ export enum PanelState {
 
 /**
  * Static angle for each state, or `null` when the angle is derived live from the
- * environment. `RAIN_PROTECTION` sits at 135° — a heavy outward tilt that sheds
- * water off the glazing while still admitting some light.
+ * environment. `RAIN_PROTECTION` reads `RAIN_SAFE_ANGLE` (`@/lib/pbif/thresholds`)
+ * — the SAME constant `trackingPolicy.ts`'s `WEATHER_PROTECTION` case now reads
+ * for the other (PBIF) control path, so there is exactly one rain-safe angle in
+ * the twin rather than two definitions that happened to agree by coincidence.
  */
 export const STATE_ANGLE: Record<PanelState, number | null> = {
   [PanelState.FULLY_OPEN]: 90,
@@ -58,7 +61,7 @@ export const STATE_ANGLE: Record<PanelState, number | null> = {
   [PanelState.STORM_LOCK]: 0,
   [PanelState.PRIVACY_MODE]: 180,
   [PanelState.MAINTENANCE]: 90,
-  [PanelState.RAIN_PROTECTION]: 135,
+  [PanelState.RAIN_PROTECTION]: RAIN_SAFE_ANGLE,
   [PanelState.SOLAR_TRACKING]: null,
 }
 

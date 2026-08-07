@@ -20,7 +20,7 @@ import { persist } from 'zustand/middleware'
  * fighting stale saved coordinates.
  */
 
-export type WindowId = 'pipeline' | 'weather' | 'pbif' | 'pv' | 'ai' | 'whatif' | 'assistant' | 'fdd'
+export type WindowId = 'pipeline' | 'weather' | 'pbif' | 'pv' | 'thermal' | 'lighting' | 'ai' | 'whatif' | 'assistant' | 'fdd'
 
 /** Persisted per-window state. Position/size are optional — absent means "use
  *  the tool's default", so we never freeze a window to an old default. */

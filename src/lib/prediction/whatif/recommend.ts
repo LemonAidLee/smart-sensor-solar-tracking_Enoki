@@ -15,10 +15,12 @@
  * Two of these studies land squarely on a modelling boundary, and both report it
  * in `limitation` rather than papering over it:
  *
- *   • The façade studies move the **thermal** load at the glazing, but the BEMS's
- *     **electrical** HVAC demand is currently driven by outdoor dry-bulb and
- *     occupancy alone. The two are not yet coupled, so a locked façade correctly
- *     shows a large thermal change and no electrical one.
+ *   • The façade studies (Stage 7.9) move the **thermal** load at the glazing,
+ *     which `BuildingThermalEngine` now carries through the envelope and the
+ *     cooling plant's COP into the BEMS's **electrical** HVAC demand — so a
+ *     locked façade correctly shows a large thermal change AND a proportional
+ *     electrical one. What remains an assumption, not a live simulation, is the
+ *     projection reading that chain at equilibrium and through a fixed COP.
  *   • The islanding study changes no dispatch, because the utility is the
  *     balancing component and performs no routing the battery reacts to.
  *
@@ -245,18 +247,18 @@ function recommendFacade({ scenario, comparisons }: Inputs): WhatIfRecommendatio
 
   return {
     headline: open
-      ? `Locking the façade open raises peak solar heat gain by ${magnitude(gain)} and daylight availability by ${magnitude(daylight)}.`
-      : `Locking the façade closed cuts peak solar heat gain by ${magnitude(gain)}, at the cost of daylight availability falling by ${magnitude(daylight)}.`,
-    observation: `Façade solar gain is ${movement(gain)} and daylight availability ${movement(daylight)}. HVAC electrical demand is ${movement(cooling)}.`,
+      ? `Locking the façade open raises peak solar heat gain by ${magnitude(gain)}, daylight availability by ${magnitude(daylight)} and peak HVAC electrical demand by ${magnitude(cooling)}.`
+      : `Locking the façade closed cuts peak solar heat gain by ${magnitude(gain)} and peak HVAC electrical demand by ${magnitude(cooling)}, at the cost of daylight availability falling by ${magnitude(daylight)}.`,
+    observation: `Façade solar gain is ${movement(gain)}, daylight availability ${movement(daylight)} and HVAC electrical demand ${movement(cooling)}.`,
     evidence: `Peak façade solar gain ${pair(gain)} (thermal); daylight ${pair(daylight)}; peak HVAC electrical demand ${pair(cooling)}.`,
     reason: open
-      ? 'Fully retracted blades admit the incident beam at the glazing’s full solar heat-gain coefficient, so both the thermal load and the useful daylight scale directly with openness.'
-      : 'Fully deployed blades admit nothing at the glazing, so the solar component of the façade load falls to zero — and so does the daylight that openness was providing.',
+      ? 'Fully retracted blades admit the incident beam at the glazing’s full solar heat-gain coefficient, so the thermal load and the useful daylight both scale directly with openness. `BuildingThermalEngine` (Stage 7.9) carries that thermal load through the envelope and the cooling plant’s COP into electrical HVAC demand, so the electrical figure moves with it.'
+      : 'Fully deployed blades admit nothing at the glazing, so the solar component of the façade load falls to zero — and so does the daylight that openness was providing, and the electrical cooling load `BuildingThermalEngine` derives from it.',
     impact: open
-      ? `${kw(Math.abs(gain?.delta ?? 0))} more peak thermal load reaching the glazing, with daylight availability at ${pct(daylight?.sandbox ?? 0)} across daylight hours.`
-      : `${kw(Math.abs(gain?.delta ?? 0))} less peak thermal load at the glazing, with daylight availability falling to ${pct(daylight?.sandbox ?? 0)} — deep-plan spaces would need artificial lighting.`,
+      ? `${kw(Math.abs(gain?.delta ?? 0))} more peak thermal load reaching the glazing, ${kw(Math.abs(cooling?.delta ?? 0))} more peak HVAC electrical demand, with daylight availability at ${pct(daylight?.sandbox ?? 0)} across daylight hours.`
+      : `${kw(Math.abs(gain?.delta ?? 0))} less peak thermal load at the glazing and ${kw(Math.abs(cooling?.delta ?? 0))} less peak HVAC electrical demand, with daylight availability falling to ${pct(daylight?.sandbox ?? 0)} — deep-plan spaces would need artificial lighting.`,
     limitation:
-      'The façade’s thermal effect and the building’s electrical HVAC demand are not yet coupled in this twin: the BEMS load model responds to outdoor dry-bulb and occupancy only. The change in solar gain shown here is therefore real and traceable, but it does not yet propagate into the projected HVAC electrical demand, PV self-consumption or grid import.',
+      'The projection evaluates the façade’s thermal mass at equilibrium rather than integrating its ~20-minute lag hour by hour (negligible over this horizon — see `equilibriumThermalState`), and converts thermal to electrical cooling load through a fixed assumed plant COP. Both are documented assumptions, not fabricated precision, and neither changes the direction of the result above.',
   }
 }
 

@@ -56,7 +56,7 @@ export function SceneEnvironment() {
   const lastSun = useRef<object | null>(null)
   const lastW = useRef({ cloud: NaN, humidity: NaN, rain: NaN })
 
-  useFrame(() => {
+  useFrame((state) => {
     const s = sim.sun
     const w = sim.weather
     if (
@@ -69,6 +69,10 @@ export function SceneEnvironment() {
     }
     lastSun.current = s
     lastW.current = { cloud: w.cloudCoverage, humidity: w.humidity, rain: w.rainIntensity }
+    // The sun rig (position, intensity, shadow radius) is about to move — the
+    // shadow depth pass must re-render this frame too (`TwinScene.tsx`:
+    // `shadowMap.autoUpdate = false`).
+    state.gl.shadowMap.needsUpdate = true
 
     const env = skyEnv(s.altitude, w.cloudCoverage)
 

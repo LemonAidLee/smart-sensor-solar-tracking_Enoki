@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { getSimulation } from '@/lib/engine/simulation'
@@ -33,6 +33,9 @@ import { StaticInstances, barMatrix, surfaceGrid } from './StaticInstances'
  */
 
 const BAR_GEOM = new THREE.BoxGeometry(1, 1, 1)
+
+/** Numeric codes for the dirty-cache health comparison — a plain object comparison would allocate. */
+const HEALTH_CODE: Record<string, number> = { ok: 0, degraded: 1, fault: 2, offline: 3 }
 
 // ── Second-skin assembly, parameterised off a single FacadeDepth reference ──────
 // FacadeDepth = the air-cavity depth from the glass to the façade frame (the
@@ -118,10 +121,40 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
   const building = useTwinStore((s) => s.building)
   const solarSelectedModuleId = useTwinStore((s) => s.solarSelectedModuleId)
   const setSolarSelectedModule = useTwinStore((s) => s.setSolarSelectedModule)
-  
+
   // VEC panel-0 highlight is suppressed in Weather Validation Mode (no VEC).
   const vecEnabled = useVecStore((s) => s.enabled) && !WEATHER_VALIDATION_MODE
   const count = sim.skin.getAllPanels().length
+
+  // Stage 7.11 — per-panel dirty cache: 1,620 fins were being fully
+  // recomputed (Vector/Matrix4 maths) AND re-uploaded to the GPU
+  // (`instanceMatrix`/`instanceColor` `needsUpdate`) on EVERY rendered frame,
+  // even for a fully-settled façade where nothing actually changed. Now a
+  // panel's own authoritative state (`rotationAngle`, solar-driven tint,
+  // health) is compared against last frame's; matrix/colour work — and the
+  // GPU upload — only happens for panels that actually moved. `NaN`-filled so
+  // the first frame after (re)allocation always updates every panel; keyed on
+  // `building` too (not just `count`) so a geometry-affecting edit (e.g.
+  // orientation, facadeDepth) that leaves panel COUNT unchanged still forces
+  // a full recompute rather than reusing stale cached values.
+  // Float64Array, NOT Float32 — `panel.rotationAngle` is a JS double, and a
+  // Float32-truncated copy would almost never compare `===` equal to it again
+  // even when genuinely unchanged, permanently defeating the dirty check.
+  // A `useRef`, not `useMemo` — this is mutated every frame inside `useFrame`
+  // (outside React's render phase), which is exactly what refs are for; a
+  // `useMemo` result is meant to stay untouched between renders.
+  const dirtyCache = useRef({
+    angle: new Float64Array(0),
+    lit: new Float64Array(0),
+    health: new Int8Array(0),
+  })
+  useEffect(() => {
+    dirtyCache.current = {
+      angle: new Float64Array(count).fill(NaN),
+      lit: new Float64Array(count).fill(NaN),
+      health: new Int8Array(count).fill(-1),
+    }
+  }, [count, building])
 
   // Static framing — frame rails (bay boundaries), mounting brackets and the fixed
   // central shafts, ALL derived from the single FacadeDepth cavity reference so the
@@ -169,16 +202,31 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [building])
 
-  useFrame(() => {
+  useFrame((state) => {
     const m = mesh.current
     if (!m) return
     const panels = sim.skin.getAllPanels()
     const n = Math.min(panels.length, count)
     const cavity = Math.max(MIN_CAVITY, sim.building.facadeDepth)
     const engineStandoff = engineStandoffOf(sim.building.facadeDepth)
-    
+    const { angle: lastAngle, lit: lastLit, health: lastHealth } = dirtyCache.current
+    let dirty = false
+
     for (let i = 0; i < n; i++) {
       const p = panels[i]
+      const healthCode = HEALTH_CODE[p.healthStatus] ?? 0
+      const lit = clamp(p.solarExposure * 1.25)
+      // The debug VEC pulse (i===0 while enabled) animates purely from wall-clock
+      // time, not panel state, so it must bypass the dirty check to keep pulsing.
+      const forceUpdate = vecEnabled && i === 0
+      if (!forceUpdate && p.rotationAngle === lastAngle[i] && lit === lastLit[i] && healthCode === lastHealth[i]) {
+        continue // settled panel, unchanged tint — nothing to recompute or re-upload
+      }
+      dirty = true
+      lastAngle[i] = p.rotationAngle
+      lastLit[i] = lit
+      lastHealth[i] = healthCode
+
       const open = p.openness
       const finW = p.width * FIN_WIDTH_RATIO
 
@@ -221,7 +269,6 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
       }
 
       // Colour: closed = deep cool tint, open = bright reflective; solar adds warmth.
-      const lit = clamp(p.solarExposure * 1.25)
       if (p.healthStatus === 'fault') color.setRGB(0.85, 0.12, 0.12)
       else if (p.healthStatus === 'offline') color.setRGB(0.09, 0.1, 0.12)
       else if (p.healthStatus === 'degraded') color.setRGB(0.72, 0.46, 0.12)
@@ -239,8 +286,13 @@ export function FacadeLayer({ meshRef }: FacadeLayerProps = {}) {
       
       m.setColorAt(i, color)
     }
-    m.instanceMatrix.needsUpdate = true
-    if (m.instanceColor) m.instanceColor.needsUpdate = true
+    if (dirty) {
+      m.instanceMatrix.needsUpdate = true
+      if (m.instanceColor) m.instanceColor.needsUpdate = true
+      // The shadow-casting fins moved — the shadow depth pass must re-render
+      // this frame too (see TwinScene.tsx: `shadowMap.autoUpdate = false`).
+      state.gl.shadowMap.needsUpdate = true
+    }
   })
 
   return (

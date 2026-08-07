@@ -20,7 +20,7 @@
 
 import { nearestCongruent, solveForNormal, type Intent, type SolarVector, type Vec3 } from '@/lib/kinematics'
 import type { FacadeState, PbifDecision, PbifState } from './decisionEngine'
-import { DYNAMIC_DEADBAND_DEG } from './thresholds'
+import { DYNAMIC_DEADBAND_DEG, RAIN_SAFE_ANGLE } from './thresholds'
 import type { SolarResourceState } from './solarResourceAssessment'
 
 /** How a policy drives the blades — for UI classification and behaviour text. */
@@ -57,7 +57,7 @@ export function policyFor(decision: PbifDecision): TrackingPolicy {
         kind: 'protect',
         facadeState: 'CLOSED',
         label: 'Rain-Safe Configuration',
-        behaviour: `Blades move to the fully closed configuration (0°) to preserve the glazing instead of tracking the sun.`,
+        behaviour: `Blades tilt to the rain-safe orientation (${RAIN_SAFE_ANGLE}°) to shed water off the glazing instead of tracking the sun.`,
         tracksSun: false,
       }
     case 'ECONOMY_TRACKING':
@@ -108,9 +108,16 @@ export function resolveTarget(state: PbifState, input: PbifTargetInput): number 
   const facadeState: FacadeState = (state === 'SAFE_MODE' || state === 'WEATHER_PROTECTION') ? 'CLOSED' : 'TRACKING'
 
   if (facadeState === 'CLOSED') {
-    // The panel normal should become parallel to the façade surface normal.
-    // In our geometry engine, this is exactly 0°.
-    return nearestCongruent(currentAngle, 0, BLADE_PERIOD_DEG)
+    // Two different protective postures for two different hazards, both
+    // "CLOSED" in the sense of suspending tracking: SAFE_MODE (wind) moves
+    // the panel normal parallel to the façade surface normal (0°); WEATHER_
+    // PROTECTION (rain) tilts to `RAIN_SAFE_ANGLE` — the SAME constant
+    // `panelStates.ts`'s `STATE_ANGLE[RAIN_PROTECTION]` reads for the
+    // non-validation control path, so there is exactly one rain-safe angle
+    // in the twin (Stage 7.10.2 — previously this branch hardcoded 0° for
+    // both states, silently ignoring `RAIN_SAFE_ANGLE`).
+    const safeAngle = state === 'WEATHER_PROTECTION' ? RAIN_SAFE_ANGLE : 0
+    return nearestCongruent(currentAngle, safeAngle, BLADE_PERIOD_DEG)
   }
 
   // facadeState === 'TRACKING'

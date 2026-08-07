@@ -21,7 +21,23 @@ import { WEATHER_VALIDATION_MODE } from '@/lib/engine/validationMode'
  */
 export function TwinScene() {
   return (
-    <Canvas shadows dpr={[1, 2]} gl={{ antialias: true }} className="absolute inset-0">
+    <Canvas
+      shadows
+      dpr={[1, 2]}
+      gl={{ antialias: true }}
+      className="absolute inset-0"
+      // Stage 7.11 — the shadow depth pass was re-rendering every one of every
+      // shadow-casting object (1,620 fins + 189 roof modules + curtain wall)
+      // on EVERY rendered frame, even when the façade was fully settled and
+      // the sun hadn't moved since the last frame. `autoUpdate = false` turns
+      // that into an opt-in pass: every place something shadow-relevant
+      // actually moves (`FacadeLayer.tsx`, `SceneEnvironment.tsx`'s sun rig)
+      // flags `gl.shadowMap.needsUpdate = true` itself the frame it happens.
+      // Three.js clears the flag after it renders that one pass, so a static
+      // scene now pays for the shadow pass roughly as often as the shadows
+      // actually change, not once per render frame.
+      onCreated={({ gl }) => { gl.shadowMap.autoUpdate = false; gl.shadowMap.needsUpdate = true }}
+    >
       <SimDriver />
       <CameraRig />
       <SceneEnvironment />

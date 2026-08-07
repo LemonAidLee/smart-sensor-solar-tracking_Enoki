@@ -1,11 +1,13 @@
 'use client'
 
-import { Cloud, Brain, FlaskConical, ShieldCheck, Sparkles, Workflow, Zap, MessageSquare, type LucideIcon } from 'lucide-react'
+import { Cloud, Brain, FlaskConical, Flame, Lightbulb, ShieldCheck, Sparkles, Workflow, Zap, MessageSquare, type LucideIcon } from 'lucide-react'
 import type { WindowId } from '@/lib/dt/windowStore'
 import { CyberPhysicalPipelineBody } from './CyberPhysicalPipeline'
 import { WeatherPanelBody } from './MetricsHUD'
 import { PbifDecisionBody } from './PbifPanel'
 import { RooftopPvBody } from './RooftopPvPanel'
+import { BuildingThermalBody } from './BuildingThermalPanel'
+import { BuildingLightingBody } from './BuildingLightingPanel'
 import { AiPredictionBody } from './AiPredictionPanel'
 import { AiWhatIfBody } from './AiWhatIfPanel'
 import { AiAssistantBody } from './AiAssistantPanel'
@@ -87,6 +89,36 @@ export const WORKSPACE_TOOLS: WorkspaceTool[] = [
     defaultY: 264,
     defaultW: 320,
     Body: RooftopPvBody,
+  },
+  {
+    // Building Thermal Response (Stage 7.9) — the bridge between the Adaptive
+    // Façade and the BEMS. Its own tool because it is a distinct engineering
+    // subsystem (`buildingThermal.ts`), not a sub-view of either the façade or
+    // the PV/BEMS panel — exactly the same reasoning that gave Rooftop PV its
+    // own top-level tool above.
+    id: 'thermal',
+    label: 'Building Thermal Response',
+    icon: Flame,
+    accent: '#f97316',
+    defaultX: 0,
+    defaultY: 302,
+    defaultW: 320,
+    Body: BuildingThermalBody,
+  },
+  {
+    // Building Lighting Response (Stage 7.10) — the second Building Physics
+    // Layer subsystem, sibling to Building Thermal Response. Its own tool for
+    // the same reason Building Thermal got one: a distinct engineering
+    // subsystem (`buildingLighting.ts`), not a sub-view of the façade or the
+    // PV/BEMS panel.
+    id: 'lighting',
+    label: 'Building Lighting Response',
+    icon: Lightbulb,
+    accent: '#facc15',
+    defaultX: 0,
+    defaultY: 340,
+    defaultW: 320,
+    Body: BuildingLightingBody,
   },
 ]
 

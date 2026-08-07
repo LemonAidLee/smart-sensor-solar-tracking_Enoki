@@ -1,31 +1,44 @@
 /**
- * Building Energy Management System (BEMS) — Stage 7.4.
+ * Building Energy Management System (BEMS) — Stage 7.4, extended by Stage 7.5
+ * (Battery), Stage 7.6 (Grid), Stage 7.9 (façade-driven solar cooling
+ * addition) and Stage 7.10 (façade-driven artificial lighting addition).
  *
- * The Rooftop PV plant produces AC power; until now that power had nowhere to
- * go. This subsystem gives it a destination:
+ * The Rooftop PV plant produces AC power; this subsystem gives it a
+ * destination:
  *
  *   Environment → Solar Physics → PV Plant → AC Output
  *                                              │
  *                                              ▼
- *                                    Building Energy Bus
+ *                                    Building Energy Bus ──► Battery (storage)
  *                                              │
  *                                              ▼
  *                                       Building Load
+ *                                              │
+ *                                              ▼
+ *                                     Utility Grid (`grid.ts`, balancing)
  *
  * ── Subsystem boundaries (guide §6, §11) ─────────────────────────────────────
  * This engine is pure, framework-free and renders nothing. It consumes only
- * scalars it is handed — time of day, outdoor temperature and the inverter's
- * already-computed AC output — and never reaches into the solar, façade, PBIF or
- * PV engines. In particular it NEVER re-derives PV power: `pvACOutputKW` comes
- * straight from `PVInverterEngine.getMetrics().currentACPowerKW`, so there is
- * exactly one authority for generation, exactly as `SolarPhysicsEngine` is the
- * one authority for irradiance.
+ * scalars it is handed — time of day, outdoor temperature, the inverter's
+ * already-computed AC output, the façade-driven solar cooling addition from
+ * `BuildingThermalEngine` (Stage 7.9), and the façade-driven artificial
+ * lighting addition from `BuildingLightingEngine` (Stage 7.10) — and never
+ * reaches into the solar, façade, PBIF or PV engines. In particular it NEVER
+ * re-derives PV power: `pvACOutputKW` comes straight from
+ * `PVInverterEngine.getMetrics().currentACPowerKW`, so there is exactly one
+ * authority for generation, exactly as `SolarPhysicsEngine` is the one
+ * authority for irradiance, `BuildingThermalEngine` is the one authority for
+ * the façade's thermal effect on cooling demand, and `BuildingLightingEngine`
+ * is the one authority for the façade's daylight effect on lighting demand.
  *
  * ── Scope ────────────────────────────────────────────────────────────────────
- * Stage 7.4 stops at Building Load. Battery and Grid are explicitly NOT
- * implemented: the bus declares their ports and reports the import that a grid
- * connection *would* have to supply, but no storage or grid exchange is
- * simulated. See `FUTURE PORTS` below.
+ * Storage connects through the `StoragePort` interface (`connectStorage()`,
+ * dispatched inside `update()` and settled by `settleBus()` below) — this
+ * engine knows there is *a* store, never which one, so `BatteryEnergyEngine`
+ * is never imported here. The bus reports `requiredGridImportKW`/`surplusKW`
+ * as whatever storage could not cover; `grid.ts`'s `GridEnergyEngine` (Stage
+ * 7.6) reads those two numbers and classifies them — it performs no dispatch
+ * of its own, so this engine remains the single settlement authority.
  */
 
 import { clamp, smoothstep } from './math'
@@ -41,12 +54,20 @@ import type { BuildingConfig } from './types'
  *
  * Sources for the intensities:
  *  • Lighting — ASHRAE 90.1 Lighting Power Density allowance for office space
- *    (≈0.61–0.9 W/ft² ≈ 6.6–9.7 W/m²); 8 W/m² sits mid-range.
+ *    (≈0.61–0.9 W/ft² ≈ 6.6–9.7 W/m²) totals 8 W/m² mid-range. Stage 7.10 splits
+ *    that total into this category's OWN non-daylight-responsive share — egress,
+ *    corridor and back-of-house circuits that stay occupancy-driven regardless
+ *    of daylight — and a separate daylight-responsive share owned entirely by
+ *    `BuildingLightingEngine` (`buildingLighting.ts`, `ARTIFICIAL_LIGHTING_DENSITY_WM2`).
+ *    The two sum back to the original 8 W/m² total at full occupancy with zero
+ *    daylight (night), so Stage 7.10 changes WHEN the peak is reached, not what
+ *    the peak itself is.
  *  • Office equipment — ASHRAE 90.1 Appendix G / CIBSE Guide F typical office
  *    plug-load densities (7–10 W/m²).
  *  • HVAC — cooling-dominated tropical office; the largest single end use.
  *    Malaysian commercial Building Energy Index practice (MS 1525) puts HVAC at
- *    roughly half of total electrical demand, which 22 W/m² of a 42 W/m² peak
+ *    roughly half to three-fifths of total electrical demand, which 22 W/m² of
+ *    the 37 W/m² peak (22+3+7+2+3, summed across `LOAD_CATEGORIES` below)
  *    reproduces.
  *  • Elevators / miscellaneous services — CIBSE Guide F typical allowances for
  *    vertical transport and landlord services (pumps, security, comms rooms).
@@ -70,7 +91,10 @@ export type BuildingLoadCategoryId = 'hvac' | 'lighting' | 'equipment' | 'elevat
 
 export const LOAD_CATEGORIES: readonly LoadCategorySpec[] = [
   { id: 'hvac', label: 'HVAC', peakDensity: 22, nightFraction: 0.15, weatherSensitive: true },
-  { id: 'lighting', label: 'Lighting', peakDensity: 8, nightFraction: 0.1, weatherSensitive: false },
+  // Non-daylight-responsive share only (egress/corridor/back-of-house) — see
+  // the header note above. The daylight-responsive remainder is
+  // `BuildingLightingEngine`'s `ARTIFICIAL_LIGHTING_DENSITY_WM2` (5 W/m²).
+  { id: 'lighting', label: 'Lighting', peakDensity: 3, nightFraction: 0.1, weatherSensitive: false },
   { id: 'equipment', label: 'Office Equipment', peakDensity: 7, nightFraction: 0.25, weatherSensitive: false },
   { id: 'elevators', label: 'Elevators', peakDensity: 2, nightFraction: 0.05, weatherSensitive: false },
   { id: 'services', label: 'Building Services', peakDensity: 3, nightFraction: 0.55, weatherSensitive: false },
@@ -127,8 +151,13 @@ const HVAC_THERMAL = {
   LAG_SIM_SECONDS: 15 * 60,
 } as const
 
-/** Gross floor area of the building, m². */
-function grossFloorArea(cfg: BuildingConfig): number {
+/**
+ * Gross floor area of the building, m². Exported so `BuildingLightingEngine`
+ * (Stage 7.10) scales its own daylight-responsive rated capacity off the SAME
+ * floor area this engine's demand model uses — one authority, never a second
+ * `width × depth × floorCount` computed elsewhere.
+ */
+export function grossFloorArea(cfg: BuildingConfig): number {
   return cfg.width * cfg.depth * Math.max(1, cfg.floorCount)
 }
 
@@ -187,6 +216,8 @@ export interface BuildingDemand {
   totalKW: number
   /** The cooling (HVAC) share of it, kW. */
   hvacKW: number
+  /** The lighting share of it, kW (Stage 7.10 — Base Lighting + Artificial Lighting). */
+  lightingKW: number
   /** Occupancy fraction driving the profile, 0–1. */
   occupancy: number
   /** HVAC demand multiplier applied, 0–1. */
@@ -201,21 +232,44 @@ export interface BuildingDemand {
  * `hvacFactor` is passed in rather than derived here because the live engine
  * carries a *lagged* value (thermal mass) while a projection uses the
  * equilibrium one; the demand arithmetic itself is identical either way.
+ *
+ * `solarCoolingLoadKW` (Stage 7.9) is the façade-driven addition to the HVAC
+ * term, published by `BuildingThermalEngine` — see `buildingThermal.ts`. It is
+ * already electrical kW (converted via the cooling plant's COP), so it adds
+ * straight onto the category's occupancy-driven baseline with no further
+ * conversion. Defaults to 0 so any other caller is unaffected.
+ *
+ * `artificialLightingKW` (Stage 7.10) is the equivalent addition to the
+ * Lighting term, published by `BuildingLightingEngine` — see
+ * `buildingLighting.ts`. Already electrical kW and already occupancy-scaled,
+ * so it too adds straight onto the category's baseline. Defaults to 0 so the
+ * AI Prediction / What-If layers (unmodified this stage — CLAUDE.md §11)
+ * continue to see exactly the behaviour they already validated.
  */
 export function buildingDemandKW(
   floorAreaM2: number,
   timeHours: number,
   hvacFactor: number,
+  solarCoolingLoadKW = 0,
+  artificialLightingKW = 0,
 ): BuildingDemand {
   const occupancy = occupancyFraction(timeHours)
   let totalKW = 0
   let hvacKW = 0
+  let lightingKW = 0
   for (const spec of LOAD_CATEGORIES) {
     const kW = categoryDemandKW(spec, floorAreaM2, occupancy, hvacFactor)
     totalKW += kW
     if (spec.id === 'hvac') hvacKW = kW
+    if (spec.id === 'lighting') lightingKW = kW
   }
-  return { totalKW, hvacKW, occupancy, hvacFactor }
+  const solarAddition = Math.max(0, solarCoolingLoadKW)
+  hvacKW += solarAddition
+  totalKW += solarAddition
+  const lightingAddition = Math.max(0, artificialLightingKW)
+  lightingKW += lightingAddition
+  totalKW += lightingAddition
+  return { totalKW, hvacKW, lightingKW, occupancy, hvacFactor }
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +291,7 @@ export interface BuildingLoadCategoryState {
  *
  *   ┌── PV Inverter ──►┐                         ├──► Building Load
  *   │          Battery ┤  Building Energy Bus    ├──► Battery charge
- *   └──── (future) Grid┘                         └──► (future) Grid export
+ *   └──────────Grid────┘                         └──► Grid export
  *
  * Stage 7.4 connected PV in and load out. Stage 7.5 connects storage, with the
  * standard self-consumption-priority routing:
@@ -245,8 +299,8 @@ export interface BuildingLoadCategoryState {
  *   1. PV serves the building load directly.
  *   2. Any PV surplus charges the battery.
  *   3. Any remaining deficit is met by discharging the battery.
- *   4. Whatever the battery cannot cover is `requiredGridImportKW` — reported so
- *      the shortfall is visible, but still nothing imports it (Stage 7.6).
+ *   4. Whatever the battery cannot cover is `requiredGridImportKW` — read and
+ *      classified (not re-derived) by `grid.ts`'s `GridEnergyEngine` (Stage 7.6).
  */
 export interface EnergyBusState {
   /** AC power arriving from the PV inverter, kW. */
@@ -311,8 +365,10 @@ export interface StorageDispatch {
  * The bus's storage port. Any subsystem that can store energy implements this;
  * the bus hands it the PV-only imbalance and receives a dispatch back. Keeping
  * it an interface means `buildingEnergy.ts` imports nothing from the battery —
- * the router knows there is *a* store, not *which* store — and a future grid
- * connection can plug in through the same pattern.
+ * the router knows there is *a* store, not *which* store. The grid needed no
+ * equivalent port: it is unconditional and unlimited, so `grid.ts` simply
+ * reads the bus's already-settled `requiredGridImportKW`/`surplusKW` rather
+ * than being offered a dispatch decision.
  */
 export interface StoragePort {
   dispatch(surplusKW: number, deficitKW: number, dtSimSeconds: number): StorageDispatch
@@ -412,8 +468,24 @@ export class BuildingEnergyEngine {
    *                         0 means "initialise": the HVAC lag snaps to its
    *                         target instead of integrating, so a seed call or a
    *                         timeline scrub produces no startup transient.
+   * @param solarCoolingLoadKW Façade-driven addition to HVAC demand, electrical
+   *                         kW, published by `BuildingThermalEngine` (Stage
+   *                         7.9) — NEVER recomputed here, added to the HVAC
+   *                         category's occupancy-driven baseline only.
+   * @param artificialLightingKW Daylight-responsive addition to Lighting
+   *                         demand, electrical kW, published by
+   *                         `BuildingLightingEngine` (Stage 7.10) — NEVER
+   *                         recomputed here, added to the Lighting category's
+   *                         occupancy-driven baseline only.
    */
-  update(timeHours: number, outdoorTempC: number, pvACOutputKW: number, dtSimSeconds: number): void {
+  update(
+    timeHours: number,
+    outdoorTempC: number,
+    pvACOutputKW: number,
+    dtSimSeconds: number,
+    solarCoolingLoadKW = 0,
+    artificialLightingKW = 0,
+  ): void {
     this.occupancy = occupancyFraction(timeHours)
 
     // ── HVAC thermal response, lagged by the fabric's thermal mass ──────────
@@ -424,14 +496,17 @@ export class BuildingEnergyEngine {
     this.hvacFactor += (targetHvacFactor - this.hvacFactor) * alpha
 
     // ── Per-category demand ─────────────────────────────────────────────────
+    const solarAddition = Math.max(0, solarCoolingLoadKW)
+    const lightingAddition = Math.max(0, artificialLightingKW)
     let totalKW = 0
     for (let i = 0; i < LOAD_CATEGORIES.length; i++) {
-      const powerKW = categoryDemandKW(
-        LOAD_CATEGORIES[i],
-        this.floorAreaM2,
-        this.occupancy,
-        this.hvacFactor,
-      )
+      const spec = LOAD_CATEGORIES[i]
+      let powerKW = categoryDemandKW(spec, this.floorAreaM2, this.occupancy, this.hvacFactor)
+      // Base HVAC + Solar Cooling Load (guide §9) and Base Lighting + Artificial
+      // Lighting (Stage 7.10) — the ONE additive step both this live path and
+      // `buildingDemandKW`'s projection path apply.
+      if (spec.id === 'hvac') powerKW += solarAddition
+      if (spec.id === 'lighting') powerKW += lightingAddition
       const state = this.categories[i]
       state.powerKW = powerKW
       totalKW += powerKW
@@ -484,14 +559,16 @@ export class BuildingEnergyEngine {
  * resolved. Written as a standalone pure function (mutating a caller-owned
  * object so the hot path allocates nothing) because the bus is a real
  * architectural node, not incidental arithmetic. Stage 7.5 added storage here
- * and nowhere else, exactly as Stage 7.4 said it would; the grid will follow the
- * same way.
+ * and nowhere else, exactly as Stage 7.4 said it would; Stage 7.6's grid reads
+ * this function's output rather than adding a step to it.
  *
  * Routing, in strict priority order:
  *   1. PV → load          `pvToLoad = min(generation, load)`
  *   2. PV surplus → battery
  *   3. battery → remaining load
- *   4. whatever is left is the grid's problem (not yet simulated)
+ *   4. whatever is left is the grid's problem — settled here as
+ *      `requiredGridImportKW`/`surplusKW`, classified (not re-derived) by
+ *      `grid.ts`'s `GridEnergyEngine`
  *
  * Conservation, which the caller may assert:
  *   generation = pvToLoad + batteryCharge + surplus
