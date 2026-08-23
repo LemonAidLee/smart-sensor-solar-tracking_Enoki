@@ -2,6 +2,8 @@
 
 import { useRef } from "react"
 import { motion, useInView } from "framer-motion"
+import Link from "next/link"
+import { ArrowRight, Code } from "lucide-react"
 
 // Reusable cinematic text reveal component
 function TextReveal({ children, delay = 0, className = "" }: { children: React.ReactNode, delay?: number, className?: string }) {
@@ -155,6 +157,33 @@ export function ProjectContext() {
               </FadeReveal>
             ))}
           </div>
+        </div>
+
+        {/* CTAs */}
+        <div className="mt-48 grid grid-cols-1 md:grid-cols-2 gap-8">
+          <Link href="/digital-twin" className="group block">
+            <div className="bg-emerald/10 border border-emerald/20 hover:bg-emerald/20 transition-colors duration-500 rounded-xl p-10 flex flex-col items-start h-full relative overflow-hidden shadow-2xl">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-emerald/20 blur-[100px] rounded-full group-hover:bg-emerald/30 transition-colors duration-500" />
+              <span className="text-emerald font-mono text-xs tracking-[0.2em] uppercase mb-6 block">Interactive Application</span>
+              <h3 className="text-3xl font-medium tracking-tight mb-4 flex items-center gap-4">
+                Enter Digital Twin <ArrowRight className="w-6 h-6 group-hover:translate-x-2 transition-transform" />
+              </h3>
+              <p className="text-gray-300 font-light leading-relaxed max-w-sm">
+                Interact with the real-time simulation, control the kinematics, and run AI what-if scenarios.
+              </p>
+            </div>
+          </Link>
+          <Link href="/engineering" className="group block">
+            <div className="bg-black/40 border border-white/10 hover:bg-white/[0.05] transition-colors duration-500 rounded-xl p-10 flex flex-col items-start h-full shadow-2xl">
+              <span className="text-gray-400 font-mono text-xs tracking-[0.2em] uppercase mb-6 block">Documentation</span>
+              <h3 className="text-3xl font-medium tracking-tight mb-4 flex items-center gap-4">
+                Engineering Lab <Code className="w-6 h-6 group-hover:translate-x-2 transition-transform" />
+              </h3>
+              <p className="text-gray-300 font-light leading-relaxed max-w-sm">
+                Read the technical implementation details, system architecture, ESP32 firmware, and equations.
+              </p>
+            </div>
+          </Link>
         </div>
 
       </div>

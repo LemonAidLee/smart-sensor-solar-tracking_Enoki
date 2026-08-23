@@ -112,22 +112,22 @@ export function ProblemSolutionSequence() {
             <SolutionCard 
               step="01"
               icon={Eye}
-              title="Sense"
-              desc="LDR, Pyranometer, Temperature, Humidity, Wind, Rain, PIR, and CO₂ sensors continuously ingest environmental states."
+              title="Environmental Ingestion"
+              desc="Real-time localized sensing (LDR, Pyranometer) and predictive weather APIs stream boundary conditions into the engine."
               delay={0.2}
             />
             <SolutionCard 
               step="02"
               icon={Cpu}
-              title="Think"
-              desc="The Sensor Fusion Engine aggregates and cleans raw environmental data, passing it to the Digital Twin physics solver."
+              title="Coupled Physics"
+              desc="A holistic simulation architecture where Solar tracking alters Thermal load, which dictates HVAC Energy demand simultaneously."
               delay={0.3}
             />
             <SolutionCard 
               step="03"
               icon={Network}
-              title="Decide"
-              desc="The PBIF Engine computes optimal shading angles and predictive actions, translating physics into kinetic motion."
+              title="Actuation Logic"
+              desc="The PBIF Engine computes the optimal balance between glare, thermal comfort, and energy, issuing kinetic commands to the façade."
               delay={0.4}
             />
           </div>

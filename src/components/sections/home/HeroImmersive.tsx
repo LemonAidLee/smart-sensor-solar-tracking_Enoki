@@ -2,6 +2,7 @@
 
 import { useRef } from "react"
 import { motion, useScroll, useTransform, useInView } from "framer-motion"
+import { useTwinStore } from "@/lib/engine/store"
 
 // Reusable cinematic text reveal component
 function TextReveal({ children, delay = 0, className = "" }: { children: React.ReactNode, delay?: number, className?: string }) {
@@ -50,6 +51,16 @@ export function HeroImmersive() {
   
   const yText = useTransform(scrollYProgress, [0, 1], ["0%", "30%"])
   const opacity = useTransform(scrollYProgress, [0, 0.8], [1, 0])
+
+  // Pull live telemetry from the digital twin store
+  const { snapshot } = useTwinStore()
+  
+  // Format live values for the badges
+  const irradiance = Math.round(snapshot.sun.irradiance)
+  const indoorTemp = snapshot.weather.temperature.toFixed(1)
+  const windSpeed = Math.round(snapshot.weather.windSpeed)
+  const panelAngle = snapshot.metrics.averagePanelAngle.toFixed(1)
+  const hvacLoad = snapshot.metrics.totalCoolingLoad.toFixed(1)
 
   return (
     <section 
@@ -122,11 +133,11 @@ export function HeroImmersive() {
           transition={{ duration: 1, delay: 3.4, ease: [0.76, 0, 0.24, 1] }}
           className="grid grid-cols-2 md:grid-cols-5 gap-4 md:gap-8 w-full border-t border-white/10 pt-10"
         >
-          <DataBadge label="Solar Irradiance" value="840 W/m²" />
-          <DataBadge label="Indoor Temp" value="22.5 °C" />
-          <DataBadge label="Wind Speed" value="12 km/h" />
-          <DataBadge label="Panel Angle" value="45.2°" />
-          <DataBadge label="Energy Saved" value="12.4 kWh" />
+          <DataBadge label="Solar Irradiance" value={`${irradiance} W/m²`} />
+          <DataBadge label="Outdoor Temp" value={`${indoorTemp} °C`} />
+          <DataBadge label="Wind Speed" value={`${windSpeed} km/h`} />
+          <DataBadge label="Avg Panel Angle" value={`${panelAngle}°`} />
+          <DataBadge label="HVAC Load" value={`${hvacLoad} kW`} />
         </motion.div>
 
       </motion.div>
