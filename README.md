@@ -11,8 +11,6 @@ SOLIS AI is a comprehensive, interactive digital twin of a smart building equipp
 
 **[Open the Live Digital Twin](https://solisenoki-phi.vercel.app/)**
 
-*(Replace the link above with the deployed Vercel URL before publishing.)*
-
 ## Project Overview
 
 The goal of SOLIS is to model and optimize a building's physical interactions with its environment. It achieves this by coupling a real-time weather and solar physics engine with a physical façade model. As the virtual louvres rotate to track the sun or block heat, the system calculates the exact consequences on the building's thermal lag, HVAC cooling demand, daylight harvesting, and aggregate energy load.
