@@ -77,6 +77,7 @@ I have thoroughly documented the engineering logic, mathematical equations, and 
 - **[System Architecture](docs/architecture/system_overview.md)**
 - **[Cyber-Physical Pipeline](docs/architecture/cyber_physical_pipeline.md)**
 - **[PBIF & Kinematics](docs/facade/pbif_and_kinematics.md)**
+- **[Façade Design Concept](docs/facade/design_concept.md)** — the architectural reasoning, real-world precedent, and full-scale physical specification behind the façade
 - **[Thermal & Daylighting Models](docs/building-physics/thermal_and_daylighting.md)**
 - **[Energy Load & Microgrid](docs/energy/energy_model.md)**
 - **[Environment & Solar Physics](docs/simulation/environment.md)**

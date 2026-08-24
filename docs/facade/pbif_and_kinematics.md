@@ -86,6 +86,10 @@ That single closed-form angle is enough to derive every tracking behaviour the t
 
 `SAFE_MODE` and `WEATHER_PROTECTION` don't call this solver at all; they route their configured safe angle (0° or 135°) through the same shortest-path helper (`nearestCongruent`) so the animation is driven by identical logic regardless of which state commanded it — a protection state never produces a discontinuous jump any more than a tracking state does.
 
+## Physical design context
+
+This page documents the decision logic as implemented. For the architectural reasoning behind why a kinetic façade at all — the climate problem, real-world precedent, and the full-scale physical specification (blade material, servo, sensor hardware) this logic is designed to eventually drive — see [Façade Design Concept](design_concept.md).
+
 ## How a PBIF decision reaches building physics
 
 PBIF's output doesn't stop at the blade angle. The commanded rotation changes each panel's `solarExposure`, which `metrics.ts` turns into `facadeSolarGainKW` — the one number both `BuildingThermalEngine` and `BuildingLightingEngine` read to compute envelope heat gain, cooling load, and daylight-driven artificial lighting demand. See [Building Thermal & Lighting](../building-physics/thermal_and_daylighting.md) for that half of the chain.
