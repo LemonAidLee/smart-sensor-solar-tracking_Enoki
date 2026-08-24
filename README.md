@@ -9,7 +9,7 @@ SOLIS AI is a comprehensive, interactive digital twin of a smart building equipp
 
 ## Live Demo
 
-**[Open the Live Digital Twin](INSERT_LIVE_VERCEL_URL_HERE)**
+**[Open the Live Digital Twin](https://solisenoki-phi.vercel.app/)**
 
 *(Replace the link above with the deployed Vercel URL before publishing.)*
 
