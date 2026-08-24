@@ -13,8 +13,10 @@
  * the loop into the real board. Either way, NOTHING above this interface changes
  * — and a physical ESP32 on the same broker is a drop-in replacement.
  *
- * NOTE: the broker credentials below are the teammate's public demo credentials,
- * already committed to the Enoki repo. Move them to env config for production.
+ * NOTE: the broker credentials are read from environment variables
+ * (`NEXT_PUBLIC_ENOKI_MQTT_*`) rather than committed to source — this
+ * controller is inert (no host/credentials) until they're configured
+ * locally in `.env.local`. See `.env.example`.
  */
 
 import mqtt, { type MqttClient } from 'mqtt'
@@ -42,10 +44,10 @@ export interface WokwiMqttConfig {
 }
 
 export const ENOKI_MQTT: WokwiMqttConfig = {
-  host: 'f2508c3921c44e3ab62e10c7f88d0847.s1.eu.hivemq.cloud',
+  host: process.env.NEXT_PUBLIC_ENOKI_MQTT_HOST ?? '',
   wsPort: 8884,
-  username: 'YongHen27',
-  password: 'Lucky988@',
+  username: process.env.NEXT_PUBLIC_ENOKI_MQTT_USERNAME ?? '',
+  password: process.env.NEXT_PUBLIC_ENOKI_MQTT_PASSWORD ?? '',
   topic: FW.MQTT_TOPIC,
 }
 

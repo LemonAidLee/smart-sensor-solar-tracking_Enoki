@@ -32,6 +32,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
@@ -46,7 +47,15 @@ public/data/*.csv
 # Local config and reference files
 .agents/
 3D Model Files/
-E&M Programming/
 Kinetic_Facade_Algorithm_Design.pdf
 scripts/venv/
 skills-lock.json
+
+# Team/competition documents (contain teammates' names & unpublished writing)
+/Proposal/
+E&M 2026 Proposal Template.docx
+SOLIS_Digital_Twin_Engineering_Technical_Manual.docx
+SOLIS_Digital_Twin_Engineering_Technical_Manual.md
+
+# Personal machine-wide tooling docs (not part of this project)
+GLOBAL_GOOGLE_WORKSPACE.md
